@@ -1,0 +1,168 @@
+# Scenar.io — API Agent Context
+
+Condensed from **Scenar.io — End-to-End Build Doc (HackMIT 2026).md**, dated 2026-09-19. The original remains the detailed reference for full character prompts, schemas, setup instructions, and sources. This summary describes the intended build, not verified implementation status. Vendor capabilities, prices, model IDs, and event deadlines require verification before use.
+
+## Scope: API and orchestrator only
+
+Build the Python API/orchestrator for Scenar.io, a language-practice application for adult A2–B1 learners. The first scenario is ordering at a café and talking with a date in Cancún, in Mexican Spanish. The end-to-end build document is background and a source for scenario prompts and schemas; it does not expand this agent's implementation scope.
+
+Own the backend service, WebSocket contract, ElevenLabs actor integration, OpenAI director/tutor integration, microphone/audio pipeline, scenario data, run state, event logging, and feedback outputs. Deliver a service that can be exercised and validated without Unity.
+
+Unity and other clients are external consumers of the API. Do not build or modify Unity scenes, C# runtime code, avatars, animations, HUDs, world assets, rendering, deployment packages, or presentation/demo materials unless explicitly requested. Describe client obligations in the protocol documentation and use a mock client to validate them.
+
+## Architecture and ownership
+
+Python 3.11+ hosts the local WebSocket API at `ws://127.0.0.1:8765`. It captures microphone input, connects to ElevenLabs, calls OpenAI, and streams character audio and scene-action messages to clients. Keep provider credentials in Python only. If an existing integration already assigns server ownership differently, inspect and preserve the working contract before changing it.
+
+Use asyncio, typed models, and type hints. Expected libraries are `elevenlabs`, `websockets`, `openai`, Pydantic v2, PyAudio, and dotenv; inspect what is installed before adding dependencies. SDK thread callbacks must hand work to the event loop safely.
+
+OpenAI director/tutor use the Responses API with structured outputs. Keep model IDs configurable as `DIRECTOR_MODEL` and `TUTOR_MODEL`; the source's suggested IDs are unverified. Start the actor with a fast built-in ElevenLabs LLM. A Custom LLM is optional after the API works.
+
+## Implementation rules and intended layout
+
+- Secrets belong only in git-ignored `orchestrator/.env`: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AGENT_ID_LUIS`, `AGENT_ID_MARIANA`, `DIRECTOR_MODEL`, `TUTOR_MODEL`. Commit an `.env.example` without values.
+- The orchestrator must work with zero Unity clients. Tool handlers return promptly, including error results; never wait for rendering or let exceptions stall conversation.
+- Keep `protocol.py`, the mock client, and protocol documentation synchronized. Document contract changes for client owners instead of implementing their client code.
+- Keep scenario content in data files. Preserve full character prompts from the original when implementing them; the summaries below are context, not replacement prompt text.
+- The source's development rules require asking before adding new dependencies and running `pytest orchestrator` and `python eval/run_eval.py` before proposing a commit. Report missing checks or prerequisites honestly.
+- Log actual agent-assisted API work in `docs/codex-log.md`: prompt, result, and human changes. Do not present intended features as completed work.
+
+```text
+orchestrator/
+  __main__.py bridge.py actor.py director.py tutor.py protocol.py
+  .env.example requirements.txt
+scenarios/cafe_cancun/
+  scenario.yaml menu.json prompts/luis.md prompts/mariana.md
+tools/mock_unity.py tools/sample_es.wav
+eval/director_cases.jsonl eval/run_eval.py
+docs/protocol.md docs/codex-log.md
+runs/                          # git-ignored events, transcripts, audio, feedback
+```
+
+## Scenario: `cafe_cancun_v1`
+
+Fictional Café Nader, downtown Cancún, 5:30 pm. Player spawns roughly 4 m from the counter. Order/pay with Luis, then talk with Mariana at the window table. Either NPC may be visited first; only one session is live at a time.
+
+**Luis (`luis`):** About 50, café owner from Mérida. Warm, quick, practical; informal Mexican Spanish, short replies. Withholds prices until asked. Asks exactly one appropriate curveball: “¿Para aquí o para llevar?”, “¿Leche entera o deslactosada?”, or offers a concha when pay de limón is ordered. Confirms uncertain orders, calls `serve_order` when finalized, and `show_bill` when asked for the total. If the learner leaves without asking, he can reveal the bill, but this does not earn G2.
+
+**Mariana (`mariana`):** 28, marine biologist from Guadalajara, in Cancún for two years. Curious and playful. Comments on the learner's order via `user_order`; asks one question at a time. Hooks: night turtle patrols, missing tortas ahogadas, learning to freedive despite fear. After two short answers she pauses instead of carrying the conversation. Wraps up after roughly 8–10 exchanges. Name/gender/voice customization is optional, not settled.
+
+Both use informal `tú`, natural speed, short replies, and at most one gesture per reply. Spanish requests for repetition/slower speech earn two slower, simpler replies before normal pace resumes. Respect “un momento” with `skip_turn`. Keep interactions appropriate for all ages; end abusive interactions in character. Never mention AI, tools, lessons, or goals. `[DIRECTOR]` notes are silent stage directions.
+
+### Menu
+
+`menu.json` is the pricing source of truth; derive the agent menu knowledge and displayed menu from it. The in-scene menu lists names **without prices**. Python calculates totals.
+
+| Item ID | Name | MXN |
+| --- | --- | --- |
+| `americano` | Café americano | 45 |
+| `cafe_olla` | Café de olla | 50 |
+| `latte` | Latte | 65 |
+| `capuchino` | Capuchino | 65 |
+| `horchata` | Horchata fría | 55 |
+| `jamaica` | Agua de jamaica | 40 |
+| `chocolate` | Chocolate caliente | 60 |
+| `concha` | Concha | 30 |
+| `pay_limon` | Pay de limón — sold out | 70 |
+| `chilaquiles` | Chilaquiles verdes | 120 |
+
+The source also lists whole/lactose-free/oat milk, with oat milk +10 MXN, but the tool schema lacks modifiers. Resolve that inconsistency before implementing surcharges.
+
+### Goals and results
+
+Completion requires the learner's own words, not the actor supplying an answer. Preserve goal IDs.
+
+| Goal | Evidence required |
+| --- | --- |
+| G1 `order` — core | Spanish request form plus a menu item, followed by `serve_order` within two actor turns. A bare “sí” does not count. |
+| G2 `ask_price` — core | Ask item price or total before being told; cross-check chronology against any bill triggered by leaving. |
+| G4 `small_talk` — core | At least three exchanges with Mariana, including two full-clause statements about the learner. One-word answers do not count. |
+| G5 `follow_up` — core | Ask about content in Mariana's previous two turns. Quote both her line and the learner's question. Bare “¿y tú?” or an unrelated question does not count. |
+| G3 `curveball` — bonus | Appropriate Spanish answer within two turns of one of Luis's curveballs; asking for repetition is allowed. |
+| G6 `repair` — bonus | Use a Spanish repair phrase, such as “¿mande?”, “¿puedes repetir?”, “más despacio, por favor”, or “no entendí”. |
+
+Pass: all four core goals within the time cap. Partial: two or three. Retry: fewer than two. Stars = one for a pass plus one per bonus goal (0–3). English-turn and hint counters do not block passing. Live goal completions remain marked; the tutor reviews the full evidence at the end.
+
+Target run: 4–6 minutes. Luis cap: 180 seconds; Mariana: 300 seconds; whole-run estimate: about 9 minutes. Send wrap-up directions 40 seconds before session caps.
+
+## Bridge contract
+
+`orchestrator/protocol.py` is the schema source of truth. Every control frame is UTF-8 JSON beginning with `{`, with envelope fields `v: 1`, `type`, unique sender-prefixed `id` (`o-` or `u-`), and `ts` in Unix milliseconds. Validate messages; log malformed messages and ignore/log unknown types.
+
+Audio frames begin with **byte `0x01`**, followed by PCM16 little-endian, mono, 16 kHz. `audio.begin` identifies the NPC before each reply's audio. Verify ElevenLabs session audio metadata; normalize to the bridge format if necessary.
+
+| Direction | Message → additional fields |
+| --- | --- |
+| Unity → Python | `hello` → `client`, `scene`, `npcs[]` |
+| | `run.start` → `learner_name`, `mic_mode` (`open`, `ptt`, `half_duplex`) |
+| | `proximity.enter`, `proximity.exit`, `audio.drained` → `npc` |
+| | `ptt` → `down`; `hint` → `kind: subtitles` |
+| | `tool.result` → `call_id`, `ok`, `detail`; `run.end` → `reason` |
+| Python → Unity | `run.snapshot` → `goals[]`, `active_npc`, `state`, `mic_mode` |
+| | `session.state` → `npc`, `state` (`connecting`, `listening`, `thinking`, `speaking`, `ended`) |
+| | `audio.begin` → `npc`, `sample_rate`; `audio.flush` → `npc` |
+| | `tool.call` → `call_id`, `npc`, `name`, `params` |
+| | `caption` → `speaker`, `text`, `final` |
+| | `goal.update` → `goal_id`, `status: done`, `evidence` |
+| | `feedback.ready` → `report`, `html_path`; `error` → `code`, `message`, `fatal` |
+
+On `hello`, restore the HUD with `run.snapshot`. Unity restarting must not end the ElevenLabs session. New NPC entry ends the previous session before starting another.
+
+State transitions: session open → listening; learner transcript → thinking; first reply audio → speaking; playback drained → listening; interruption → flush/listening; session close → flush/ended. Use actual playback completion, not arrival of the last network chunk.
+
+### Actor client tools
+
+- `play_gesture(gesture)`: both NPCs; nonblocking. Values: `wave`, `nod`, `shake_head`, `laugh`, `think`, `shrug`, `point_menu`, `lean_in`.
+- `serve_order(items, to_go?)`: Luis; list of valid item IDs, repeated once per unit. Reject sold-out/unknown items. Record and price in Python; send scene action with `total_mxn`; return total immediately.
+- `show_bill()`: Luis; show receipt and return stored total.
+- Blocking tools have a 3-second response timeout. All tools: pre-tool speech off, interruptions allowed, immediate execution. Return clear error results for invalid parameters.
+- `tool.result` from Unity is diagnostic only; never delay the ElevenLabs result for animation. Enable built-in `end_call` and `skip_turn`. No scoring tools on actors.
+
+## Provider configuration and audio input
+
+ElevenLabs configuration: private Spanish-only agents, Mexican voices, PCM 16 kHz input/output, Patient turn-taking, 8-second timeout, 2-second soft filler timeout, interruptions enabled. Ignore backchannels `ajá`, `mhm`, `sí`, `ok`, `claro`. Start with V3 Conversational; fallback Flash v2.5. Put the small menu directly in prompt context rather than RAG. Enable required events and only needed overrides (first message/voice). Default dynamic variables: `learner_name=amigo`, `user_order=nada`.
+
+Mic defaults to `open` with a wired headset. `ptt` sends silence while Space is released. `half_duplex` mutes during NPC speech and loses barge-in; last resort only. The Python path has no built-in echo cancellation.
+
+## Director, feedback, and validation
+
+After each learner turn, judge asynchronously using the rubric, last six turns, open goals, active NPC, and new transcript. Structured verdict: goal hits with quotes, mistakes with correction/category/explanation/severity/confidence/ASR suspicion, English/repair flags, learner state, and optional director note. Cross-check hard events before awarding goals. Never delay actor speech.
+
+Apply `agent_response_correction` after interruptions to transcripts and captions, so scoring never relies on speech the learner did not hear. Carry the order to Mariana through `user_order`. Send at most one director note per three turns: options when stuck, a follow-up hook, difficulty adjustment, or wrap-up. The original also allows distressed-user slowdown without an explicit request; retain this as an exception to the default pace rule.
+
+At run end, the tutor reviews the full transcript and evidence, including goals missed by a failed/slow director call. Write `runs/<run_id>/feedback.json` and `feedback.html`; publish the result through `feedback.ready` for clients to consume. The report contains:
+
+- Result, stars, duration, goal checklist, and quoted evidence.
+- At most three fixes, ranked by severity × confidence; confidence ≥0.7 and not ASR-suspect. Label them “what we heard”.
+- One specific success with a quote; two or three useful Spanish phrases; English explanations; counters; suggested next run.
+
+Do not infer pronunciation quality from text. Saved learner audio/corrected-phrase playback is optional.
+
+Log bridge messages and ElevenLabs events in `runs/<run_id>/events.jsonl`. Measure transcript-to-first-audio median/p90; this is a proxy, not the entire end-of-speech latency. If median exceeds 1.5 seconds, try a smaller actor LLM, Flash v2.5, then Normal turn eagerness. Director target: under 1.5 seconds without blocking speech.
+
+Build a mock Unity client against shared protocol models: simulate run start/end, proximity, playback-drained notifications, tool acknowledgements, and reconnects; receive and validate streamed audio. Validate barge-in, reconnect, tool errors, audio routing, and operation without Unity. Maintain ~40 human-reviewed director cases, including misleading negatives; report per-goal precision/recall and prioritize zero false awards. Re-run on rubric changes.
+
+## API build order and completion criteria
+
+Build in independently testable stages:
+
+1. Define protocol models, scenario/menu data, configuration, and the WebSocket service with a mock client.
+2. Integrate Luis voice sessions, microphone input, audio streaming, interruption/flush handling, and prompt tool responses.
+3. Implement run/session state, reconnect snapshots, order/bill actions, and event/transcript persistence.
+4. Add the asynchronous director, evidence-based goal updates, tutor review, and JSON/HTML feedback.
+5. Add Mariana, NPC switching, and order memory; validate the complete API flow through the mock client.
+
+The API is complete when a documented command starts it, configuration and errors are clear, and the mock client can exercise a run through feedback without Unity. Verify message validation, audio framing, session switching, interruption handling, reconnection without losing the actor session, deterministic pricing, invalid tool inputs, and goal evidence checks. Provider failures must produce useful errors without leaving a run stuck. Use mocked provider responses for repeatable tests and separately document any live-provider checks and required credentials.
+
+Keep setup instructions, the message contract, sample payloads, and validation commands sufficient for the client team to integrate independently. Do not make API completion depend on a rendered scene or a standalone application build.
+
+## API decisions and limitations
+
+Resolve before depending on them:
+
+- Existing bridge server ownership and compatibility with any client already in development.
+- Exact API model IDs, SDK signatures, agent/voice IDs, supported tool parameters, and negotiated audio formats.
+- Milk modifier pricing/schema mismatch noted above.
+- Required credentials and provider access for live integration checks.
+
+Known limitations: returning to an NPC starts a fresh conversation unless visit context is added; the Python microphone path has no built-in echo cancellation; pronunciation feedback and measured learning outcomes are future work. World generation, client rendering, sponsor submissions, and demo logistics belong to the broader project and are outside this API task.
