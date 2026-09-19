@@ -1,0 +1,99 @@
+using System;
+using UnityEngine;
+
+/// <summary>
+/// Schema for StreamingAssets/npcs.json. <see cref="NpcManager"/> spawns one
+/// NPC per entry; <see cref="NpcSchedule"/> runs the moves.
+///
+/// <code>
+/// {
+///   "npcs": [{
+///     "id": "barista", "displayName": "Sofía",
+///     "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
+///     "position": {"x": 0.85, "y": -1.52, "z": 2.99}, "yaw": 180, "scale": 0.7,
+///     "walkSpeed": 0.8,
+///     "moves": [{
+///       "id": "greet", "trigger": "quest", "after": "order_coffee", "delay": 4,
+///       "path": [{"x": 0, "y": -1.52, "z": 3}, {"x": 0, "y": -1.52, "z": -1}],
+///       "endYaw": 180
+///     }]
+///   }]
+/// }
+/// </code>
+/// </summary>
+[Serializable]
+public class NpcList
+{
+    public NpcDefinition[] npcs = Array.Empty<NpcDefinition>();
+}
+
+[Serializable]
+public class NpcDefinition
+{
+    public string id;
+    public string displayName = "NPC";
+
+    [Tooltip("Model path under a Resources folder, without extension.")]
+    public string avatar = "Avatars/Female_Adult_08/Export/Female_Adult_08_facial";
+
+    [Tooltip("World position of the feet.")]
+    public Vector3 position;
+    [Tooltip("World heading in degrees (0 = +Z).")]
+    public float yaw;
+    public float scale = 1f;
+
+    [Tooltip("Metres per second when walking.")]
+    public float walkSpeed = 0.8f;
+    [Tooltip("Degrees per second when turning.")]
+    public float turnSpeed = 240f;
+
+    [Tooltip("Idle mocap clips (Resources paths). Empty = NpcIdleAnimation defaults.")]
+    public string[] idleClips = Array.Empty<string>();
+    [Tooltip("Optional walk cycle clip (Resources path). Empty = procedural gait.")]
+    public string walkClip = "";
+
+    [Header("Conversation")]
+    [Tooltip("Spoken (placeholder voice) the first time the player walks up. A loaded scenario's opening_line overrides it.")]
+    public string greeting = "";
+
+    public NpcMove[] moves = Array.Empty<NpcMove>();
+}
+
+/// <summary>One scripted walk along a path, fired by a trigger.</summary>
+[Serializable]
+public class NpcMove
+{
+    public const string TriggerStart = "start";
+    public const string TriggerQuest = "quest";
+    public const string TriggerMove = "move";
+
+    [Tooltip("Name other moves can chain from with trigger \"move\".")]
+    public string id;
+
+    [Tooltip("\"start\": when the scene loads. \"quest\": when quest `after` is completed. " +
+             "\"move\": when this NPC finishes move `after`.")]
+    public string trigger = TriggerStart;
+
+    [Tooltip("Quest id or move id, depending on trigger.")]
+    public string after = "";
+
+    [Tooltip("Seconds to wait after the trigger before setting off.")]
+    public float delay;
+
+    [Tooltip("World-space waypoints. Y is a hint; feet are snapped to the collider below.")]
+    public Vector3[] path = Array.Empty<Vector3>();
+
+    [Tooltip("Metres per second; 0 = the NPC's walkSpeed.")]
+    public float speed;
+
+    [Tooltip("Heading to settle into on arrival (degrees, 0 = +Z). Omit to keep the walking direction.")]
+    public float endYaw = float.NaN;
+
+    [Tooltip("Keep walking the path back and forth forever.")]
+    public bool loop;
+
+    [Tooltip("Fire only the first time the trigger happens.")]
+    public bool once = true;
+
+    public bool HasEndYaw => !float.IsNaN(endYaw);
+}
