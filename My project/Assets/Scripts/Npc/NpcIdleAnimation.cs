@@ -32,10 +32,25 @@ public class NpcIdleAnimation : MonoBehaviour
     [Tooltip("Play each clip this many loops before picking another (min, max).")]
     public Vector2Int loopsPerClip = new(1, 2);
 
+    [Header("Walking")]
+    [Tooltip("Optional walk cycle. Overrides Walk Clip Resource if set.")]
+    public AnimationClip walkClip;
+    [Tooltip("Fallback: Resources path of a walk cycle for the same skeleton. Leave empty to let " +
+             "NpcWalker animate the legs procedurally.")]
+    public string walkClipResource = "";
+
     /// <summary>True once the graph is driving the skeleton.</summary>
     public bool IsPlaying => graph.IsValid() && graph.IsPlaying();
 
+    /// <summary>True when a walk clip is wired into the mixer.</summary>
+    public bool HasWalkClip => walkIndex >= 0;
+
+    /// <summary>0 = idle, 1 = walk clip. Set by <see cref="NpcWalker"/> each frame.</summary>
+    public float WalkWeight { get; set; }
+
     readonly List<AnimationClip> loaded = new();
+    int walkIndex = -1;       // mixer input of the walk clip, -1 if none
+    float appliedWalk = -1f;  // last WalkWeight pushed to the mixer
     PlayableGraph graph;
     AnimationMixerPlayable mixer;
     AnimationClipPlayable[] players;
@@ -94,18 +109,22 @@ public class NpcIdleAnimation : MonoBehaviour
 #endif
         StartCoroutine(VerifyPoseChanged(avatar));
 
+        var walk = LoadWalkClip();
+        int inputs = loaded.Count + (walk != null ? 1 : 0);
+
         graph = PlayableGraph.Create($"{name} idle");
         graph.SetTimeUpdateMode(DirectorUpdateMode.GameTime);
-        mixer = AnimationMixerPlayable.Create(graph, loaded.Count);
-        players = new AnimationClipPlayable[loaded.Count];
-        for (int i = 0; i < loaded.Count; i++)
+        mixer = AnimationMixerPlayable.Create(graph, inputs);
+        players = new AnimationClipPlayable[inputs];
+        for (int i = 0; i < inputs; i++)
         {
-            players[i] = AnimationClipPlayable.Create(graph, loaded[i]);
+            players[i] = AnimationClipPlayable.Create(graph, i < loaded.Count ? loaded[i] : walk);
             players[i].SetApplyFootIK(false);
             players[i].SetApplyPlayableIK(false);
             graph.Connect(players[i], 0, mixer, i);
             mixer.SetInputWeight(i, 0f);
         }
+        walkIndex = walk != null ? loaded.Count : -1;
 
         var output = AnimationPlayableOutput.Create(graph, "Idle", animator);
         output.SetSourcePlayable(mixer);
@@ -132,11 +151,16 @@ public class NpcIdleAnimation : MonoBehaviour
         if (!IsPlaying)
             return;
 
-        if (blend < 1f)
+        float walkWeight = walkIndex >= 0 ? Mathf.Clamp01(WalkWeight) : 0f;
+        if (blend < 1f || walkWeight != appliedWalk)
         {
             blend = Mathf.MoveTowards(blend, 1f, Time.deltaTime / Mathf.Max(0.01f, blendTime));
-            for (int i = 0; i < players.Length; i++)
-                mixer.SetInputWeight(i, i == current ? blend : i == previous ? 1f - blend : 0f);
+            float idle = 1f - walkWeight;
+            for (int i = 0; i < loaded.Count; i++)
+                mixer.SetInputWeight(i, idle * (i == current ? blend : i == previous ? 1f - blend : 0f));
+            if (walkIndex >= 0)
+                mixer.SetInputWeight(walkIndex, walkWeight);
+            appliedWalk = walkWeight;
         }
 
         if (loaded.Count > 1 && players[current].GetTime() >= switchAt)
@@ -146,6 +170,19 @@ public class NpcIdleAnimation : MonoBehaviour
                 next++; // never repeat the same clip back to back
             StartClip(next);
         }
+    }
+
+    AnimationClip LoadWalkClip()
+    {
+        if (walkClip != null)
+            return walkClip;
+        if (string.IsNullOrEmpty(walkClipResource))
+            return null;
+        foreach (var clip in Resources.LoadAll<AnimationClip>(walkClipResource))
+            if (clip != null && !clip.name.StartsWith("__preview__"))
+                return clip;
+        Debug.LogWarning($"NpcIdleAnimation: no AnimationClip at Resources/{walkClipResource}; using procedural walk.");
+        return null;
     }
 
     static IEnumerable<string> ChildNames(Transform t)

@@ -31,6 +31,7 @@ public class NpcLookAt : MonoBehaviour
 
     NpcAvatarLoader loader;
     NpcIdleAnimation idle;
+    NpcWalker walker;
     Transform player;
     Transform head;
     Transform spine;
@@ -43,6 +44,7 @@ public class NpcLookAt : MonoBehaviour
     {
         loader = GetComponent<NpcAvatarLoader>();
         idle = GetComponent<NpcIdleAnimation>();
+        walker = GetComponent<NpcWalker>();
         loader.Loaded += OnAvatarLoaded;
     }
 
@@ -73,7 +75,8 @@ public class NpcLookAt : MonoBehaviour
 
     void Update()
     {
-        if (player == null)
+        // While walking the walker owns the body heading; the head still tracks.
+        if (player == null || (walker != null && walker.OwnsHeading))
             return;
 
         Vector3 toPlayer = player.position - transform.position;

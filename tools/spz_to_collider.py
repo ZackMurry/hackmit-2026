@@ -6,7 +6,7 @@ WorldLabs ships a *_collider.glb next to each .spz, but when that's missing this
 builds an approximation: splat centres are voxelised into an occupancy grid,
 holes are closed, the surface is extracted with marching cubes, floaters are
 dropped and the result is decimated. The output uses the raw .spz coordinate
-frame, matching WorldColliderLoader's mirrorZ expectation.
+frame, matching WorldColliderLoader's mirrorX expectation.
 
 Usage:
     python tools/spz_to_collider.py in.spz out_collider.glb [--voxel 0.05] ...

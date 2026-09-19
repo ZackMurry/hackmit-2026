@@ -1,0 +1,58 @@
+{
+  "npcs": [
+    {
+      "id": "barista",
+      "displayName": "Sofía",
+      "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
+      "position": { "x": 0.85, "y": -1.52, "z": 2.992 },
+      "yaw": 180,
+      "scale": 0.7,
+      "walkSpeed": 0.8,
+      "moves": [
+        {
+          "id": "bring_coffee",
+          "trigger": "quest",
+          "after": "order_coffee",
+          "delay": 4,
+          "path": [
+            { "x": 1.0, "y": -1.52, "z": 2.0 },
+            { "x": 1.0, "y": -1.52, "z": -1.5 }
+          ],
+          "endYaw": 180
+        },
+        {
+          "id": "back_to_counter",
+          "trigger": "move",
+          "after": "bring_coffee",
+          "delay": 20,
+          "path": [
+            { "x": 1.0, "y": -1.52, "z": 2.0 },
+            { "x": 0.85, "y": -1.52, "z": 2.992 }
+          ],
+          "endYaw": 180
+        }
+      ]
+    },
+    {
+      "id": "regular",
+      "displayName": "Lucía",
+      "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
+      "position": { "x": 0.6, "y": -1.52, "z": -4.0 },
+      "yaw": 90,
+      "scale": 0.7,
+      "walkSpeed": 0.6,
+      "moves": [
+        {
+          "id": "pace",
+          "trigger": "start",
+          "delay": 2,
+          "loop": true,
+          "path": [
+            { "x": 0.6, "y": -1.52, "z": -4.0 },
+            { "x": 3.8, "y": -1.52, "z": -4.0 }
+          ]
+        }
+      ]
+    }
+  ]
+}
