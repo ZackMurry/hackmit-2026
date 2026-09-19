@@ -19,6 +19,9 @@ venv/
 # Run artifacts: transcripts, audio, feedback
 runs/
 
+# Local agent instructions — intentionally not shared
+CLAUDE.md
+
 # OS / editor
 .DS_Store
 .idea/
