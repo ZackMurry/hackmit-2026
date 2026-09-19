@@ -9,7 +9,7 @@ using UnityEngine.SceneManagement;
 
 /// <summary>
 /// Converts a WorldLabs .spz (kept in the repo-level Assets/Worlds folder, outside
-/// the Unity project) into a GaussianSplatAsset and points SampleScene's
+/// the Unity project) into a GaussianSplatAsset and points a scene's
 /// GaussianSplatRenderer + WorldColliderLoader at it. Drives the package's
 /// GaussianSplatAssetCreator window through reflection so the conversion can run
 /// without clicking through the UI.
@@ -17,38 +17,70 @@ using UnityEngine.SceneManagement;
 public static class WorldSplatImporter
 {
     const string kOutputFolder = "Assets/GaussianAssets";
-    const string kScenePath = "Assets/Scenes/SampleScene.unity";
 
-    const string kModernHouseSpz = "ModernHouse/modern_house_with_lush_landscaping_2m.spz";
-    const string kModernHouseCollider = "Worlds/modern_house_with_lush_landscaping_collider.glb";
+    /// <summary>One splat world and the scene that shows it.</summary>
+    struct World
+    {
+        public string spz;        // relative to <repo>/Assets/Worlds
+        public string collider;   // relative to StreamingAssets (see tools/spz_to_collider.py)
+        public string scene;      // scene whose renderer/loader get patched
+    }
+
+    static readonly World ModernHouse = new World
+    {
+        spz = "ModernHouse/modern_house_with_lush_landscaping_2m.spz",
+        collider = "Worlds/modern_house_with_lush_landscaping_collider.glb",
+        scene = "Assets/Scenes/SampleScene.unity",
+    };
+
+    static readonly World CancunCafe = new World
+    {
+        spz = "CancunCafe/cancun_cafe_model.spz",
+        collider = "Worlds/cancun_cafe_collider.glb",
+        scene = "Assets/Scenes/CancunCafe.unity",
+    };
 
     // Repo-level Assets/Worlds, i.e. <repo>/Assets/Worlds, not <repo>/My project/Assets.
     static string WorldsDir => Path.GetFullPath(Path.Combine(Application.dataPath, "../../Assets/Worlds"));
 
-    [MenuItem("Tools/Worlds/Use Modern House")]
-    static void UseModernHouse() => UseWorld(kModernHouseSpz, kModernHouseCollider);
+    [MenuItem("Tools/Worlds/Use Modern House (SampleScene)")]
+    static void UseModernHouse() => UseWorld(ModernHouse);
 
-    // Runs the Modern House import once, the first time the editor loads without the
-    // converted asset present. No-op afterwards.
+    [MenuItem("Tools/Worlds/Use Cancun Cafe (CancunCafe)")]
+    static void UseCancunCafe() => UseWorld(CancunCafe);
+
+    // Runs each import once, the first time the editor loads without the converted
+    // asset present. No-op afterwards.
     [InitializeOnLoadMethod]
-    static void AutoImportModernHouse()
+    static void AutoImport()
     {
-        if (AssetDatabase.LoadAssetAtPath<GaussianSplatAsset>(AssetPathFor(kModernHouseSpz)) != null)
+        AutoImport(ModernHouse);
+        AutoImport(CancunCafe);
+    }
+
+    static void AutoImport(World world)
+    {
+        if (AssetDatabase.LoadAssetAtPath<GaussianSplatAsset>(AssetPathFor(world.spz)) != null)
             return;
-        if (!File.Exists(Path.Combine(WorldsDir, kModernHouseSpz)))
+        if (!File.Exists(Path.Combine(WorldsDir, world.spz)))
             return;
-        EditorApplication.delayCall += UseModernHouse;
+        EditorApplication.delayCall += () => UseWorld(world);
     }
 
     static string AssetPathFor(string spzRelative) =>
         $"{kOutputFolder}/{Path.GetFileNameWithoutExtension(spzRelative)}.asset";
 
-    static void UseWorld(string spzRelative, string colliderFile)
+    static void UseWorld(World world)
     {
-        string spzPath = Path.Combine(WorldsDir, spzRelative);
+        string spzPath = Path.Combine(WorldsDir, world.spz);
         if (!File.Exists(spzPath))
         {
             Debug.LogError($"WorldSplatImporter: .spz not found at {spzPath}");
+            return;
+        }
+        if (!File.Exists(world.scene))
+        {
+            Debug.LogError($"WorldSplatImporter: scene not found at {world.scene}");
             return;
         }
 
@@ -56,8 +88,8 @@ public static class WorldSplatImporter
         if (asset == null)
             return;
 
-        PatchScene(asset, colliderFile);
-        Debug.Log($"WorldSplatImporter: {kScenePath} now uses {AssetDatabase.GetAssetPath(asset)} (collider: {colliderFile})");
+        PatchScene(world.scene, asset, world.collider);
+        Debug.Log($"WorldSplatImporter: {world.scene} now uses {AssetDatabase.GetAssetPath(asset)} (collider: {world.collider})");
     }
 
     static GaussianSplatAsset CreateSplatAsset(string spzPath)
@@ -102,12 +134,12 @@ public static class WorldSplatImporter
         return asset;
     }
 
-    static void PatchScene(GaussianSplatAsset asset, string colliderFile)
+    static void PatchScene(string scenePath, GaussianSplatAsset asset, string colliderFile)
     {
-        var scene = SceneManager.GetSceneByPath(kScenePath);
+        var scene = SceneManager.GetSceneByPath(scenePath);
         bool wasOpen = scene.isLoaded;
         if (!wasOpen)
-            scene = EditorSceneManager.OpenScene(kScenePath, OpenSceneMode.Additive);
+            scene = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Additive);
 
         foreach (var root in scene.GetRootGameObjects())
         {

@@ -4,7 +4,8 @@ Generated world models + immersive language learning
 
 ## Layout
 
-- `My project/` — Unity 6 project. Open `Assets/Scenes/SampleScene.unity`.
+- `My project/` — Unity 6 project. Scenes: `Assets/Scenes/SampleScene.unity` (ModernHouse) and
+  `Assets/Scenes/CancunCafe.unity` (Café Nader; NPCs from `npcs_cancun.json`).
 - `Assets/Worlds/` — WorldLabs Gaussian-splat worlds (`.spz`) and their collider meshes.
 - `tools/spz_to_collider.py` — builds a walkable collider `.glb` from a `.spz` when WorldLabs didn't ship one.
 
@@ -105,7 +106,16 @@ From code: `NpcManager.Instance.WalkTo("luis", new Vector3(1, -1.52f, -1.5f))` o
 `npc.GetComponent<NpcSchedule>().Trigger("bring_coffee")`.
 
 World coordinates: the splat is rendered with scale `(2, -2, 2)`, so `world = raw_spz * (2, -2, 2)`.
-The ModernHouse floor is at world `y ≈ -1.52`.
+The ModernHouse floor is at world `y ≈ -1.52`, the CancunCafe floor at `y ≈ -1.50` (the café runs
+along +z: entrance near the origin, counter at `z ≈ 14`).
+
+## Worlds
+
+Each `.spz` in `Assets/Worlds/<Name>/` is converted to a `GaussianSplatAsset` by
+`Assets/Editor/WorldSplatImporter.cs` the first time the editor loads without it (or via
+**Tools ▸ Worlds ▸ Use …**), which also points the matching scene's `GaussianSplatRenderer` and
+`WorldColliderLoader` at the asset and collider. To add a world: drop the `.spz` in
+`Assets/Worlds/`, generate its collider (below), copy a scene, and add a `World` entry to the importer.
 
 ## Collider generation
 
@@ -113,6 +123,8 @@ The ModernHouse floor is at world `y ≈ -1.52`.
 python -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
 .venv/bin/python tools/spz_to_collider.py Assets/Worlds/ModernHouse/modern_house_with_lush_landscaping_2m.spz \
     "My project/Assets/StreamingAssets/Worlds/modern_house_with_lush_landscaping_collider.glb"
+.venv/bin/python tools/spz_to_collider.py Assets/Worlds/CancunCafe/cancun_cafe_model.spz \
+    "My project/Assets/StreamingAssets/Worlds/cancun_cafe_collider.glb"
 ```
 
 ## Python API

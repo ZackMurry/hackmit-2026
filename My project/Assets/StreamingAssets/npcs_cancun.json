@@ -1,0 +1,49 @@
+{
+  "npcs": [
+    {
+      "id": "luis",
+      "displayName": "Luis",
+      "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
+      "position": { "x": -0.2, "y": -1.5, "z": 13.8 },
+      "yaw": 180,
+      "scale": 0.7,
+      "walkSpeed": 0.8,
+      "greeting": "¡Qué tal, joven! ¿Qué te doy?",
+      "moves": [
+        {
+          "id": "bring_coffee",
+          "trigger": "quest",
+          "after": "order",
+          "delay": 4,
+          "path": [
+            { "x": 0.0, "y": -1.5, "z": 8.0 },
+            { "x": 1.4, "y": -1.5, "z": 7.8 }
+          ],
+          "endYaw": 90
+        },
+        {
+          "id": "back_to_counter",
+          "trigger": "move",
+          "after": "bring_coffee",
+          "delay": 20,
+          "path": [
+            { "x": 0.0, "y": -1.5, "z": 8.0 },
+            { "x": -0.2, "y": -1.5, "z": 13.8 }
+          ],
+          "endYaw": 180
+        }
+      ]
+    },
+    {
+      "id": "mariana",
+      "displayName": "Mariana",
+      "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
+      "position": { "x": 2.4, "y": -1.5, "z": 7.6 },
+      "yaw": 270,
+      "scale": 0.7,
+      "walkSpeed": 0.6,
+      "greeting": "¡Hola! ¿Tú eres con quien quedé? Siéntate, siéntate.",
+      "moves": []
+    }
+  ]
+}
