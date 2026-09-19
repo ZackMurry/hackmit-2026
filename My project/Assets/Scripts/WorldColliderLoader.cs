@@ -13,9 +13,10 @@ public class WorldColliderLoader : MonoBehaviour
     [Tooltip("Path relative to StreamingAssets.")]
     public string colliderFile = "Worlds/rustic_kitchen_with_natural_light_collider.glb";
 
-    [Tooltip("glTF is right-handed and glTFast negates Z on import, but the splat " +
-             "importer reads .spz positions raw. Mirror Z so the two line up.")]
-    public bool mirrorZ = true;
+    [Tooltip("glTF is right-handed and glTFast converts by negating X on import, but the splat " +
+             "importer reads .spz positions raw. Mirror X back so the two line up. (Mirroring Z " +
+             "instead leaves the collider rotated 180 degrees about Y.)")]
+    public bool mirrorX = true;
 
     [Tooltip("Render the collider mesh so you can check it lines up with the splat.")]
     public bool showColliderMesh = false;
@@ -91,11 +92,11 @@ public class WorldColliderLoader : MonoBehaviour
 
     void PrepareMesh(Mesh mesh)
     {
-        if (mirrorZ)
+        if (mirrorX)
         {
             var verts = mesh.vertices;
             for (int i = 0; i < verts.Length; i++)
-                verts[i].z = -verts[i].z;
+                verts[i].x = -verts[i].x;
             mesh.vertices = verts;
         }
 

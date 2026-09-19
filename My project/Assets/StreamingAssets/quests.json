@@ -1,0 +1,8 @@
+{
+  "title": "Café",
+  "quests": [
+    { "id": "order_coffee",   "text": "Order a coffee",             "status": "todo" },
+    { "id": "ask_family",     "text": "Ask about Sofía's family",   "status": "todo" },
+    { "id": "about_yourself", "text": "Tell Sofía about yourself",  "status": "todo" }
+  ]
+}
