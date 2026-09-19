@@ -11,7 +11,7 @@ Generated world models + immersive language learning
 
 ## Talking to NPCs
 
-Start the orchestrator (`python -m orchestrator`, see `docs/api.md`), press Play, walk up to
+Start the orchestrator (`uv run python -m orchestrator`, see `docs/api.md`), press Play, walk up to
 an NPC and **hold E** to speak; release to send. The client only records the mic and displays
 what comes back — speech recognition, the character and the voice are the server's.
 
@@ -120,16 +120,16 @@ Each `.spz` in `Assets/Worlds/<Name>/` is converted to a `GaussianSplatAsset` by
 ## Collider generation
 
 ```sh
-python -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
-.venv/bin/python tools/spz_to_collider.py Assets/Worlds/ModernHouse/modern_house_with_lush_landscaping_2m.spz \
+uv sync --group mesh   # numpy/scipy/scikit-image/trimesh; or pip install -r tools/requirements.txt
+uv run tools/spz_to_collider.py Assets/Worlds/ModernHouse/modern_house_with_lush_landscaping_2m.spz \
     "My project/Assets/StreamingAssets/Worlds/modern_house_with_lush_landscaping_collider.glb"
-.venv/bin/python tools/spz_to_collider.py Assets/Worlds/CancunCafe/cancun_cafe_model.spz \
+uv run tools/spz_to_collider.py Assets/Worlds/CancunCafe/cancun_cafe_model.spz \
     "My project/Assets/StreamingAssets/Worlds/cancun_cafe_collider.glb"
 ```
 
 ## Python API
 
-See [API setup and endpoint contracts](docs/api.md). Start with
-`.venv/bin/python -m orchestrator` after installing the documented dependencies.
+See [API setup and endpoint contracts](docs/api.md). `uv sync`, fill in
+`orchestrator/.env`, then `uv run python -m orchestrator`.
 Unity remains separately owned. The API includes an ElevenLabs adapter based on
 the teammate's voice demo scripts; see the API docs for keys and agent IDs.
