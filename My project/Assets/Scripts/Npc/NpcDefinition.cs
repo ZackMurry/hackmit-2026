@@ -52,6 +52,18 @@ public class NpcDefinition
     [Tooltip("Optional walk cycle clip (Resources path). Empty = procedural gait.")]
     public string walkClip = "";
 
+    [Header("Conversation")]
+    [Tooltip("Who this character is, for the LLM system prompt.")]
+    public string persona = "a friendly barista at a small café";
+    public string language = "Spanish";
+    [Tooltip("ISO code for speech recognition / synthesis.")]
+    public string languageCode = "es";
+    public string learnerLevel = "beginner (A1-A2)";
+    [Tooltip("ElevenLabs voice id; empty = default.")]
+    public string voiceId = "";
+    [Tooltip("Spoken (in the target language) the first time the player walks up.")]
+    public string greeting = "";
+
     public NpcMove[] moves = Array.Empty<NpcMove>();
 }
 

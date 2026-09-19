@@ -155,6 +155,14 @@ public class NpcManager : MonoBehaviour
         var interact = go.AddComponent<NpcInteractable>();
         interact.displayName = def.displayName;
 
+        var talk = go.AddComponent<NpcConversation>();
+        talk.persona = def.persona;
+        talk.language = def.language;
+        talk.languageCode = def.languageCode;
+        talk.learnerLevel = def.learnerLevel;
+        talk.voiceId = def.voiceId ?? "";
+        talk.greeting = def.greeting ?? "";
+
         var walker = go.AddComponent<NpcWalker>();
         walker.walkSpeed = def.walkSpeed > 0f ? def.walkSpeed : 0.8f;
         walker.turnSpeed = def.turnSpeed > 0f ? def.turnSpeed : 240f;

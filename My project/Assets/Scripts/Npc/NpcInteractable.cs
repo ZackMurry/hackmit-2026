@@ -27,11 +27,13 @@ public class NpcInteractable : MonoBehaviour
 
     Transform playerEyes;
     NpcSpeaker speaker;
+    NpcConversation conversation;
     GUIStyle promptStyle;
 
     void Start()
     {
         speaker = GetComponent<NpcSpeaker>();
+        conversation = GetComponent<NpcConversation>();
 
         var fpc = FindFirstObjectByType<FirstPersonController>();
         if (fpc != null)
@@ -48,7 +50,9 @@ public class NpcInteractable : MonoBehaviour
         if (keyboard != null && keyboard[interactKey].wasPressedThisFrame)
         {
             Interacted?.Invoke();
-            if (testSpeechOnInteract && speaker != null && !speaker.IsSpeaking)
+            // With a real conversation backend the key is push-to-talk instead.
+            bool live = conversation != null && conversation.IsConfigured;
+            if (testSpeechOnInteract && !live && speaker != null && !speaker.IsSpeaking)
                 speaker.SpeakTest();
         }
     }
@@ -79,9 +83,15 @@ public class NpcInteractable : MonoBehaviour
             padding = new RectOffset(16, 16, 10, 10),
         };
 
-        string text = speaker != null && speaker.IsSpeaking
-            ? $"{displayName} is speaking…"
-            : $"Press {interactKey} to talk to {displayName}";
+        string text;
+        if (conversation != null && !string.IsNullOrEmpty(conversation.Status))
+            text = conversation.Status;
+        else if (speaker != null && speaker.IsSpeaking)
+            text = $"{displayName} is speaking…";
+        else if (conversation != null && conversation.IsConfigured)
+            text = $"Hold {interactKey} to talk to {displayName}";
+        else
+            text = $"Press {interactKey} to talk to {displayName}";
 
         var size = promptStyle.CalcSize(new GUIContent(text));
         var rect = new Rect((Screen.width - size.x) / 2f, Screen.height * 0.8f, size.x, size.y);

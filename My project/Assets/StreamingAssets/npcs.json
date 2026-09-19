@@ -8,6 +8,12 @@
       "yaw": 180,
       "scale": 0.7,
       "walkSpeed": 0.8,
+      "persona": "the barista and owner of Café Sol, a small neighbourhood café in Madrid. Warm, chatty, a little nosy, proud of your cortados. You have two kids and a dog called Mochi",
+      "language": "Spanish",
+      "languageCode": "es",
+      "learnerLevel": "beginner (A1-A2)",
+      "voiceId": "",
+      "greeting": "¡Hola! Bienvenido a Café Sol. ¿Qué te pongo?",
       "moves": [
         {
           "id": "bring_coffee",
@@ -41,6 +47,12 @@
       "yaw": 90,
       "scale": 0.7,
       "walkSpeed": 0.6,
+      "persona": "a regular customer at Café Sol, a university student from Sevilla waiting for a friend. Relaxed, curious about foreigners, likes talking about music and football",
+      "language": "Spanish",
+      "languageCode": "es",
+      "learnerLevel": "beginner (A1-A2)",
+      "voiceId": "",
+      "greeting": "Hola, ¿qué tal? ¿Eres nuevo por aquí?",
       "moves": [
         {
           "id": "pace",

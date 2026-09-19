@@ -8,6 +8,19 @@ Generated world models + immersive language learning
 - `Assets/Worlds/` — WorldLabs Gaussian-splat worlds (`.spz`) and their collider meshes.
 - `tools/spz_to_collider.py` — builds a walkable collider `.glb` from a `.spz` when WorldLabs didn't ship one.
 
+## Talking to NPCs
+
+Walk up to an NPC and **hold E** to speak (release to send), or press **T** to type a line.
+The loop is speech → text (ElevenLabs Scribe, or Whisper) → Claude playing the character →
+ElevenLabs voice → lip-sync. Claude answers in the target language and also returns an English
+translation, a correction of any mistake you made and a hint of what to say next — **hold Tab**
+to see them under the subtitles. It marks quests done when you actually achieve them in
+conversation (e.g. order a coffee), which in turn can trigger NPC moves from `npcs.json`.
+
+Keys go in `My project/Assets/StreamingAssets/secrets.json` (git-ignored; copy
+`secrets.example.json`) or in `ANTHROPIC_API_KEY` / `ELEVENLABS_API_KEY` / `OPENAI_API_KEY`.
+Without keys, E plays a placeholder voice so lip-sync and positioning can still be tested.
+
 ## Content is JSON
 
 Everything the scene needs beyond the world itself lives in `My project/Assets/StreamingAssets/`
@@ -53,6 +66,8 @@ lip-synced speech, E-to-talk, walking, schedule).
 | `position`, `yaw`, `scale` | Where the feet start (world units), heading in degrees (0 = +Z), avatar scale. |
 | `walkSpeed`, `turnSpeed` | m/s and deg/s defaults for this NPC. |
 | `idleClips`, `walkClip` | Resources paths of mocap clips. No walk clip → procedural gait. |
+| `persona`, `language`, `languageCode`, `learnerLevel` | Who the character is and what they speak; goes into the LLM system prompt / STT / TTS. |
+| `voiceId`, `greeting` | ElevenLabs voice (empty = default) and the line said when the player first walks up. |
 | `moves[].trigger` | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`). |
 | `moves[].delay` | Seconds to wait after the trigger, e.g. walk over 4 s after `order_coffee` is done. |
 | `moves[].path` | World-space waypoints. Y is a hint; feet snap to the collider below. |
