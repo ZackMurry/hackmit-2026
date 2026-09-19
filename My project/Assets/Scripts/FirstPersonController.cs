@@ -28,6 +28,9 @@ public class FirstPersonController : MonoBehaviour
     [Header("Debug")]
     public bool logInput = false;
 
+    /// <summary>Cleared by <see cref="PlayerSeating"/> while sitting: look still works, WASD/gravity don't.</summary>
+    public bool CanMove { get; set; } = true;
+
     CharacterController controller;
     float pitch;
     float verticalVelocity;
@@ -71,7 +74,8 @@ public class FirstPersonController : MonoBehaviour
             return;
 
         Look(mouse);
-        Move(keyboard);
+        if (CanMove)
+            Move(keyboard);
     }
 
     void Look(Mouse mouse)

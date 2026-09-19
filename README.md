@@ -93,7 +93,8 @@ lip-synced speech, E-to-talk, walking, schedule).
 | `position`, `yaw`, `scale` | Where the feet start (world units), heading in degrees (0 = +Z), avatar scale.                          |
 | `walkSpeed`, `turnSpeed`   | m/s and deg/s defaults for this NPC.                                                                    |
 | `idleClips`, `walkClip`    | Resources paths of mocap clips. No walk clip → procedural gait.                                         |
-| `languageCode`, `greeting` | Language code sent to the server; line said when the player first walks up.                             |
+| `greeting`                 | Line said (placeholder voice) when the player first walks up; a scenario's `opening_line` overrides it. |
+| `seat`                     | Seat id from `seats.json` to start the scene sitting in.                                                |
 | `moves[].trigger`          | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`). |
 | `moves[].delay`            | Seconds to wait after the trigger, e.g. walk over 4 s after `order` is done.                     |
 | `moves[].path`             | World-space waypoints. Y is a hint; feet snap to the collider below.                                    |
@@ -101,9 +102,30 @@ lip-synced speech, E-to-talk, walking, schedule).
 | `moves[].endYaw`           | Heading to turn to on arrival; omit to keep the walking direction.                                      |
 | `moves[].loop`             | Ping-pong the path forever (patrols).                                                                   |
 | `moves[].once`             | Default `true`; set `false` to re-fire every time the trigger happens.                                  |
+| `moves[].sit`              | Seat id to sit down in on arrival.                                                                      |
 
-From code: `NpcManager.Instance.WalkTo("luis", new Vector3(1, -1.52f, -1.5f))` or
-`npc.GetComponent<NpcSchedule>().Trigger("bring_coffee")`.
+From code: `NpcManager.Instance.WalkTo("luis", new Vector3(1, -1.52f, -1.5f))`,
+`npc.GetComponent<NpcSchedule>().Trigger("bring_coffee")`, `npc.GetComponent<NpcSitter>().Sit("table_a")`
+/ `.Stand()`. Any walk stands the NPC up first.
+
+### `seats.json`
+
+The scanned world has no chair objects, so chairs are anchors. `SeatManager` (on the `Seats`
+object; `CancunCafe` uses `seats_cancun.json`) places one `Seat` per entry:
+
+```json
+{
+  "seats": [
+    { "id": "table_a", "position": { "x": 1.1, "y": -0.9, "z": 8.7 }, "yaw": 90, "playerCanSit": true }
+  ]
+}
+```
+
+`position` is a point on the cushion (world units), `yaw` the direction the sitter faces. NPCs
+switch to the Rocketbox seated idles (`f_sit_chair_*`) and are shifted so the mocap pelvis lands
+on the cushion. The player walks up to a free seat and presses **F** to sit (camera parks
+`eyeAboveSeat` over the cushion, facing `yaw`; look still works, WASD doesn't); **F** or any
+movement key stands back up. Holding **E** to talk works while seated.
 
 World coordinates: the splat is rendered with scale `(2, -2, 2)`, so `world = raw_spz * (2, -2, 2)`.
 The ModernHouse floor is at world `y ≈ -1.52`, the CancunCafe floor at `y ≈ -1.50` (the café runs

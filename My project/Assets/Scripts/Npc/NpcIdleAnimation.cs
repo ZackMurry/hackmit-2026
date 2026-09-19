@@ -7,7 +7,8 @@ using UnityEngine.Playables;
 /// <summary>
 /// Plays looping idle mocap on the avatar so she stands naturally instead of in
 /// the FBX bind (T) pose. Cycles through the clips with crossfades so the idle
-/// never looks like a single repeating loop.
+/// never looks like a single repeating loop. Has a second, seated set of clips
+/// that <see cref="NpcSitter"/> switches to with <see cref="Sitting"/>.
 ///
 /// Clips are Microsoft Rocketbox mocap for the same Biped skeleton, so they bind
 /// directly by bone path; no Humanoid avatar or AnimatorController needed.
@@ -24,6 +25,17 @@ public class NpcIdleAnimation : MonoBehaviour
         "Avatars/Animations/f_idle_neutral_01",
         "Avatars/Animations/f_idle_neutral_02",
         "Avatars/Animations/f_idle_breathe_01",
+    };
+
+    [Header("Seated")]
+    [Tooltip("Seated idle clips. Overrides Sit Clip Resources if non-empty.")]
+    public AnimationClip[] sitClips;
+    [Tooltip("Fallback: Resources paths of seated idles for the same skeleton.")]
+    public string[] sitClipResources =
+    {
+        "Avatars/Animations/f_sit_chair_idle_neutral_01",
+        "Avatars/Animations/f_sit_chair_breathe_01",
+        "Avatars/Animations/f_sit_chair_idle_look_around",
     };
 
     [Tooltip("Seconds to crossfade between idles.")]
@@ -48,7 +60,27 @@ public class NpcIdleAnimation : MonoBehaviour
     /// <summary>0 = idle, 1 = walk clip. Set by <see cref="NpcWalker"/> each frame.</summary>
     public float WalkWeight { get; set; }
 
-    readonly List<AnimationClip> loaded = new();
+    /// <summary>Play the seated idles instead of the standing ones. Crossfades over blendTime.</summary>
+    public bool Sitting
+    {
+        get => sitting;
+        set
+        {
+            if (sitting == value)
+                return;
+            sitting = value;
+            if (IsPlaying)
+                StartClip(PickNext());
+        }
+    }
+
+    /// <summary>True when seated clips were found (else Sitting keeps the standing idle).</summary>
+    public bool HasSitClips => sitCount > 0;
+
+    readonly List<AnimationClip> loaded = new();  // standing idles, then seated idles
+    int standCount;           // loaded[0..standCount) stand, [standCount..standCount+sitCount) sit
+    int sitCount;
+    bool sitting;
     int walkIndex = -1;       // mixer input of the walk clip, -1 if none
     float appliedWalk = -1f;  // last WalkWeight pushed to the mixer
     PlayableGraph graph;
@@ -67,24 +99,15 @@ public class NpcIdleAnimation : MonoBehaviour
     void OnAvatarLoaded(Transform avatar)
     {
         loaded.Clear();
-        if (clips != null && clips.Length > 0)
-            loaded.AddRange(clips);
-        else
-            foreach (string path in clipResources)
-            {
-                var found = Resources.LoadAll<AnimationClip>(path);
-                if (found.Length == 0)
-                    Debug.LogWarning($"NpcIdleAnimation: no AnimationClip at Resources/{path}");
-                loaded.AddRange(found);
-            }
-        // FBX imports also carry an editor-only "__preview__" clip.
-        loaded.RemoveAll(c => c == null || c.name.StartsWith("__preview__"));
-
-        if (loaded.Count == 0)
+        loaded.AddRange(LoadSet(clips, clipResources, "idle"));
+        standCount = loaded.Count;
+        if (standCount == 0)
         {
             Debug.LogWarning("NpcIdleAnimation: no idle clips found; avatar will stay in bind pose.");
             return;
         }
+        loaded.AddRange(LoadSet(sitClips, sitClipResources, "seated idle"));
+        sitCount = loaded.Count - standCount;
 
         // Generic FBX imports already put an Animator on the root; reuse it.
         var animator = avatar.GetComponent<Animator>();
@@ -129,10 +152,45 @@ public class NpcIdleAnimation : MonoBehaviour
         var output = AnimationPlayableOutput.Create(graph, "Idle", animator);
         output.SetSourcePlayable(mixer);
 
-        StartClip(0);
-        mixer.SetInputWeight(0, 1f);
+        current = -1;
+        StartClip(sitting && sitCount > 0 ? standCount : 0);
+        mixer.SetInputWeight(current, 1f);
         blend = 1f;
         graph.Play();
+    }
+
+    static List<AnimationClip> LoadSet(AnimationClip[] assigned, string[] resources, string what)
+    {
+        var set = new List<AnimationClip>();
+        if (assigned != null && assigned.Length > 0)
+            set.AddRange(assigned);
+        else if (resources != null)
+            foreach (string path in resources)
+            {
+                var found = Resources.LoadAll<AnimationClip>(path);
+                if (found.Length == 0)
+                    Debug.LogWarning($"NpcIdleAnimation: no {what} AnimationClip at Resources/{path}");
+                set.AddRange(found);
+            }
+        // FBX imports also carry an editor-only "__preview__" clip.
+        set.RemoveAll(c => c == null || c.name.StartsWith("__preview__"));
+        return set;
+    }
+
+    /// <summary>Index range of the set we should be playing (seated when sitting and available).</summary>
+    (int start, int count) ActiveSet =>
+        sitting && sitCount > 0 ? (standCount, sitCount) : (0, standCount);
+
+    /// <summary>Random clip from the active set, never the one already playing when there is a choice.</summary>
+    int PickNext()
+    {
+        var (start, count) = ActiveSet;
+        if (count <= 1 || current < start || current >= start + count)
+            return start + Random.Range(0, count);
+        int next = start + Random.Range(0, count - 1);
+        if (next >= current)
+            next++;
+        return next;
     }
 
     void StartClip(int index)
@@ -163,13 +221,8 @@ public class NpcIdleAnimation : MonoBehaviour
             appliedWalk = walkWeight;
         }
 
-        if (loaded.Count > 1 && players[current].GetTime() >= switchAt)
-        {
-            int next = Random.Range(0, loaded.Count - 1);
-            if (next >= current)
-                next++; // never repeat the same clip back to back
-            StartClip(next);
-        }
+        if (ActiveSet.count > 1 && players[current].GetTime() >= switchAt)
+            StartClip(PickNext());
     }
 
     AnimationClip LoadWalkClip()

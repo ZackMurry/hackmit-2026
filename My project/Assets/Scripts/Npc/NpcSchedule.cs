@@ -6,7 +6,7 @@ using UnityEngine;
 /// Runs the <see cref="NpcMove"/> list from npcs.json: fires each move when its
 /// trigger happens (scene start, a quest completing, or another of this NPC's
 /// moves finishing), waits the configured delay, then hands the path to
-/// <see cref="NpcWalker"/>.
+/// <see cref="NpcWalker"/>. A move with <c>sit</c> ends with the NPC sitting down.
 /// </summary>
 [RequireComponent(typeof(NpcWalker))]
 public class NpcSchedule : MonoBehaviour
@@ -66,7 +66,11 @@ public class NpcSchedule : MonoBehaviour
     {
         var done = running;
         running = null;
-        if (done == null || string.IsNullOrEmpty(done.id))
+        if (done == null)
+            return;
+        if (!string.IsNullOrEmpty(done.sit))
+            GetComponent<NpcSitter>()?.Sit(done.sit);
+        if (string.IsNullOrEmpty(done.id))
             return;
         foreach (var move in moves)
             if (move.trigger == NpcMove.TriggerMove && move.after == done.id)

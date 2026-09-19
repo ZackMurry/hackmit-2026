@@ -97,6 +97,11 @@ public class NpcWalker : MonoBehaviour
         if (path.Count == 0)
             return;
 
+        // Walking starts from standing.
+        var sitter = GetComponent<NpcSitter>();
+        if (sitter != null && sitter.IsSeated)
+            sitter.Stand();
+
         if (speed > 0f)
             walkSpeed = speed;
         endYaw = finalYaw;

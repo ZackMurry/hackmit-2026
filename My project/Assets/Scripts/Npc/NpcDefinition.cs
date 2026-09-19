@@ -11,11 +11,11 @@ using UnityEngine;
 ///     "id": "barista", "displayName": "Sofía",
 ///     "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
 ///     "position": {"x": 0.85, "y": -1.52, "z": 2.99}, "yaw": 180, "scale": 0.7,
-///     "walkSpeed": 0.8,
+///     "walkSpeed": 0.8, "seat": "",
 ///     "moves": [{
 ///       "id": "greet", "trigger": "quest", "after": "order_coffee", "delay": 4,
 ///       "path": [{"x": 0, "y": -1.52, "z": 3}, {"x": 0, "y": -1.52, "z": -1}],
-///       "endYaw": 180
+///       "endYaw": 180, "sit": "table_b"
 ///     }]
 ///   }]
 /// }
@@ -51,6 +51,9 @@ public class NpcDefinition
     public string[] idleClips = Array.Empty<string>();
     [Tooltip("Optional walk cycle clip (Resources path). Empty = procedural gait.")]
     public string walkClip = "";
+
+    [Tooltip("Seat id (seats.json) to start the scene sitting in. Empty = standing at position.")]
+    public string seat = "";
 
     [Header("Conversation")]
     [Tooltip("Spoken (placeholder voice) the first time the player walks up. A loaded scenario's opening_line overrides it.")]
@@ -94,6 +97,9 @@ public class NpcMove
 
     [Tooltip("Fire only the first time the trigger happens.")]
     public bool once = true;
+
+    [Tooltip("Seat id (seats.json) to sit down in on arrival. Empty = stay standing.")]
+    public string sit = "";
 
     public bool HasEndYaw => !float.IsNaN(endYaw);
 }

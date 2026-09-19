@@ -32,6 +32,7 @@ public class NpcLookAt : MonoBehaviour
     NpcAvatarLoader loader;
     NpcIdleAnimation idle;
     NpcWalker walker;
+    NpcSitter sitter;
     Transform player;
     Transform head;
     Transform spine;
@@ -45,6 +46,7 @@ public class NpcLookAt : MonoBehaviour
         loader = GetComponent<NpcAvatarLoader>();
         idle = GetComponent<NpcIdleAnimation>();
         walker = GetComponent<NpcWalker>();
+        sitter = GetComponent<NpcSitter>();
         loader.Loaded += OnAvatarLoaded;
     }
 
@@ -75,8 +77,9 @@ public class NpcLookAt : MonoBehaviour
 
     void Update()
     {
-        // While walking the walker owns the body heading; the head still tracks.
-        if (player == null || (walker != null && walker.OwnsHeading))
+        // While walking the walker owns the body heading, and a seated body stays
+        // put in its chair; the head still tracks in both cases.
+        if (player == null || (walker != null && walker.OwnsHeading) || (sitter != null && sitter.IsSeated))
             return;
 
         Vector3 toPlayer = player.position - transform.position;

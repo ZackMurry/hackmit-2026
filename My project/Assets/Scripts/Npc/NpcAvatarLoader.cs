@@ -71,6 +71,13 @@ public class NpcAvatarLoader : MonoBehaviour
             StartCoroutine(GroundFeet());
     }
 
+    /// <summary>Re-run the feet grounding, e.g. after standing up from a chair.</summary>
+    public void ReGroundFeet()
+    {
+        if (groundFeet && AvatarRoot != null)
+            StartCoroutine(GroundFeet());
+    }
+
     /// <summary>
     /// Measures the posed mesh's lowest point and moves the avatar down (or up)
     /// so it coincides with our origin. Runs after a couple of frames so the

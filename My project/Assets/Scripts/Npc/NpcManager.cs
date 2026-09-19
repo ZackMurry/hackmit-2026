@@ -6,8 +6,8 @@ using UnityEngine;
 /// <summary>
 /// Spawns every NPC described in StreamingAssets/npcs.json (see
 /// <see cref="NpcDefinition"/>) with the full component stack: avatar, idle
-/// mocap, look-at, lip-synced speech, E-to-talk prompt, walking and the move
-/// schedule. Like <see cref="QuestManager"/> it re-reads the file when it
+/// mocap, look-at, lip-synced speech, E-to-talk prompt, walking, sitting and the
+/// move schedule. Like <see cref="QuestManager"/> it re-reads the file when it
 /// changes on disk, so positions and paths can be tuned while playing.
 /// </summary>
 public class NpcManager : MonoBehaviour
@@ -166,11 +166,15 @@ public class NpcManager : MonoBehaviour
         var schedule = go.AddComponent<NpcSchedule>();
         schedule.moves = def.moves ?? Array.Empty<NpcMove>();
 
+        var sitter = go.AddComponent<NpcSitter>();
+
         var tag = go.AddComponent<NpcIdentity>();
         tag.id = id;
         tag.definition = def;
 
         go.SetActive(true);
+        if (!string.IsNullOrEmpty(def.seat))
+            sitter.Sit(def.seat); // coroutine, so only once the object is active
         return go;
     }
 
