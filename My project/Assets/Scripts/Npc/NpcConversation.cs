@@ -56,7 +56,9 @@ public class NpcConversation : MonoBehaviour
     public class Exchange
     {
         public string heard;        // what the learner said (transcript)
-        public string reply;        // NPC line in the target language
+        public string reply;        // NPC line in the target language (full caption)
+        public ConversationClient.Caption[] captions; // timed segments of reply, may be empty
+        public float spokenAt;      // Time.time the NPC's audio started, for caption timing
         public string translation;
         public string correction;
         public string hint;
@@ -217,6 +219,7 @@ public class NpcConversation : MonoBehaviour
         {
             heard = string.IsNullOrEmpty(reply.heard) ? turn.text : reply.heard,
             reply = reply.text,
+            captions = reply.captions,
             translation = reply.translation,
             correction = reply.correction,
             hint = reply.hint,
@@ -258,6 +261,8 @@ public class NpcConversation : MonoBehaviour
             speaker.Speak(clip);
         else
             speaker.SpeakTest(Mathf.Clamp(text.Length / 12f, 1f, 8f));
+        if (Last != null)
+            Last.spokenAt = Time.time;
 
         // Keep Status/Busy until she has finished so a new recording doesn't cut her off.
         yield return null;
@@ -286,6 +291,23 @@ public class NpcConversation : MonoBehaviour
         yield return new WaitForSeconds(seconds);
         if (Status == text)
             Status = "";
+    }
+
+    /// <summary>The caption segment for the current playback position, or the whole line when there are no timed captions / speech is over.</summary>
+    string CurrentCaption()
+    {
+        var captions = Last.captions;
+        if (captions == null || captions.Length == 0 || !speaker.IsSpeaking)
+            return Last.reply;
+
+        float t = Time.time - Last.spokenAt;
+        ConversationClient.Caption current = null;
+        foreach (var c in captions)
+            if (c != null && t >= c.start && (current == null || c.start >= current.start))
+                current = c;
+        if (current == null)
+            return "";                       // before the first segment starts
+        return t < current.end || current.end <= current.start ? current.text : "";
     }
 
     void DrawTypingBox()
@@ -345,8 +367,9 @@ public class NpcConversation : MonoBehaviour
         var lines = new List<(string, GUIStyle)>();
         if (!string.IsNullOrEmpty(Last.heard))
             lines.Add(($"You: {Last.heard}", heardStyle));
-        if (!string.IsNullOrEmpty(Last.reply))
-            lines.Add(($"{interactable.displayName}: {Last.reply}", replyStyle));
+        string caption = CurrentCaption();
+        if (!string.IsNullOrEmpty(caption))
+            lines.Add(($"{interactable.displayName}: {caption}", replyStyle));
         if (help && !string.IsNullOrEmpty(Last.translation))
             lines.Add(($"“{Last.translation}”", heardStyle));
         if (!string.IsNullOrEmpty(Last.correction))

@@ -30,12 +30,22 @@ public class ConversationClient : MonoBehaviour
     }
 
 #pragma warning disable 0649 // DTO fields are filled by JsonUtility
+    /// <summary>One timed caption segment; times are seconds from the start of the NPC's audio.</summary>
+    [Serializable]
+    public class Caption
+    {
+        public string text = "";
+        public float start;
+        public float end;
+    }
+
     /// <summary>What the server returns for a turn. Everything but <c>text</c> is optional.</summary>
     [Serializable]
     public class Reply
     {
         public string heard = "";        // transcript of the learner (empty when the turn was typed)
-        public string text = "";         // NPC line in the target language
+        public string text = "";         // NPC line in the target language; the full caption
+        public Caption[] captions = Array.Empty<Caption>(); // optional timed segments of text, shown in sync with audio
         public string translation = "";
         public string correction = "";
         public string hint = "";
@@ -122,10 +132,21 @@ public class ConversationClient : MonoBehaviour
     Reply Canned(Turn turn)
     {
         string line = CannedLines[canned++ % CannedLines.Length];
+        // Two timed segments over the placeholder voice's duration, so caption sync is visible offline.
+        float seconds = Mathf.Clamp(line.Length / 12f, 1f, 8f);
+        int split = line.IndexOf(' ', line.Length / 2);
+        var captions = split < 0
+            ? new[] { new Caption { text = line, start = 0f, end = seconds } }
+            : new[]
+            {
+                new Caption { text = line.Substring(0, split), start = 0f, end = seconds / 2f },
+                new Caption { text = line.Substring(split + 1), start = seconds / 2f, end = seconds },
+            };
         return new Reply
         {
             heard = turn.text ?? "(voice, no server connected)",
             text = line,
+            captions = captions,
             translation = "(offline canned reply)",
             hint = "Un café con leche, por favor.",
         };

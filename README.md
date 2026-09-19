@@ -30,6 +30,8 @@ and expects JSON back — everything except `text` is optional:
 {
   "heard": "un café por favor",
   "text": "¡Claro! ¿Con leche o solo?",
+  "captions": [ { "text": "¡Claro!", "start": 0.0, "end": 0.6 },
+                { "text": "¿Con leche o solo?", "start": 0.6, "end": 1.9 } ],
   "translation": "Sure! With milk or black?",
   "correction": "",
   "hint": "Con leche, por favor.",
@@ -39,7 +41,9 @@ and expects JSON back — everything except `text` is optional:
 }
 ```
 
-`text` is subtitled and lip-synced (with `audio` if present, else a placeholder voice),
+`text` is the caption, subtitled and lip-synced (with `audio` if present, else a placeholder voice);
+`captions` optionally splits it into timed segments (seconds from audio start) that are shown one
+at a time in sync with playback, falling back to the whole `text` once speech ends or when omitted.
 `completedQuests` ticks the quest HUD (which can trigger NPC moves), and `move` starts one of
 the NPC's `moves` directly. With `serverUrl` empty the client answers with canned lines so the
 whole interaction can be tested offline.
