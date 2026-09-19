@@ -1,0 +1,186 @@
+import asyncio
+import base64
+import io
+import json
+import wave
+from uuid import uuid4
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+
+from orchestrator.app import create_app
+from orchestrator.elevenlabs_adapter import ElevenLabsSpeech, wav_bytes
+from orchestrator.speech import SpeechInput, SpeechInputError, SpeechUnavailable
+
+
+class Socket:
+    def __init__(self, *, silent=False, bad_format=False):
+        self.queue = asyncio.Queue()
+        self.sent = []
+        self.closed = False
+        self.silent = silent
+        self.bad_format = bad_format
+
+    async def send(self, raw):
+        msg = json.loads(raw)
+        self.sent.append(msg)
+        if msg.get("type") == "conversation_initiation_client_data":
+            await self.queue.put({"type": "conversation_initiation_metadata",
+                "conversation_initiation_metadata_event": {"agent_output_audio_format":
+                    "mp3_44100" if self.bad_format else "pcm_16000"}})
+            await self.reply("Greeting", b"\x01\x01")
+        elif msg.get("type") == "user_message" and not self.silent:
+            await self.queue.put({"type": "ping", "ping_event": {"event_id": 7}})
+            await self.reply("Un café, claro.", b"\x02\x02")
+
+    async def reply(self, text, audio):
+        await self.queue.put({"type": "agent_response", "agent_response_event": {"agent_response": text}})
+        await self.queue.put({"type": "audio", "audio_event": {
+            "audio_base_64": base64.b64encode(audio).decode()}})
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        return json.dumps(await self.queue.get())
+
+    async def close(self):
+        self.closed = True
+
+
+def make_provider(**kwargs):
+    sockets, requests = [], []
+
+    def handler(request):
+        requests.append(request)
+        if request.url.path.endswith("speech-to-text"):
+            assert b"scribe_v2" in request.content
+            assert b"RIFF" in request.content
+            return httpx.Response(200, json={"text": "Quiero un café"})
+        assert request.url.params["agent_id"] in {"agent-luis", "agent-mariana"}
+        return httpx.Response(200, json={"signed_url": "wss://example.invalid/signed"})
+
+    async def connect(url, **options):
+        socket = Socket(silent=kwargs.pop("silent", False), bad_format=kwargs.pop("bad_format", False))
+        sockets.append(socket)
+        return socket
+
+    provider = ElevenLabsSpeech("test-key", {"luis": "agent-luis", "mariana": "agent-mariana"},
+        client=httpx.AsyncClient(base_url="https://example.invalid", transport=httpx.MockTransport(handler)),
+        connect=connect, quiet=.005, idle_seconds=.05)
+    return provider, sockets, requests
+
+
+def turn(session=None, npc="luis", **kwargs):
+    return SpeechInput(b"\x00\x00" * 1600, "audio/pcm", session or uuid4(), npc, sample_rate=16000, **kwargs)
+
+
+def test_speech_reuses_session_excludes_greeting_and_switches_npc():
+    async def run():
+        provider, sockets, requests = make_provider()
+        request = turn(scenario_id=uuid4(), scenario={"title": "Café"})
+        try:
+            result = await provider.respond(request)
+            with wave.open(io.BytesIO(result.audio)) as wav:
+                assert wav.getframerate() == 16000
+                assert wav.readframes(100) == b"\x02\x02"
+            assert result.user_transcript == "Quiero un café"
+            assert result.agent_transcript == "Un café, claro."
+            assert any(m["type"] == "contextual_update" for m in sockets[0].sent)
+            assert any(m["type"] == "pong" for m in sockets[0].sent)
+            await provider.respond(request)
+            assert len(sockets) == 1
+            await provider.respond(turn(request.session_id, "mariana"))
+            assert len(sockets) == 2
+            assert sockets[0].closed
+            await provider.end_session(request.session_id)
+            assert sockets[1].closed
+            assert not provider.sessions
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_http_real_adapter_contract(tmp_path):
+    provider, sockets, _ = make_provider()
+    with TestClient(create_app(speech=provider, data_dir=tmp_path)) as client:
+        sid = str(uuid4())
+        result = client.post("/v1/speech", params={"session_id": sid, "npc_id": "luis",
+            "sample_rate": 16000, "response_format": "json"}, content=b"\0\0" * 1600,
+            headers={"Content-Type": "audio/pcm"})
+        assert result.status_code == 200
+        assert base64.b64decode(result.json()["audio_base64"]).startswith(b"RIFF")
+        assert result.json()["agent_transcript"] == "Un café, claro."
+        assert client.delete(f"/v1/speech/sessions/{sid}").status_code == 204
+        assert sockets[0].closed
+
+
+def test_timeout_closes_socket():
+    async def run():
+        provider, sockets, _ = make_provider(silent=True)
+        try:
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(.03):
+                    await provider.respond(turn())
+            assert sockets[0].closed
+            assert not provider.sessions
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_bad_audio_and_unknown_npc_do_not_connect():
+    async def run():
+        provider, sockets, requests = make_provider()
+        try:
+            with pytest.raises(SpeechInputError):
+                await provider.respond(SpeechInput(b"invalid", "audio/wav", uuid4(), "luis"))
+            with pytest.raises(SpeechUnavailable):
+                await provider.respond(turn(npc="unknown"))
+            assert not sockets and not requests
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_idle_expiry():
+    async def run():
+        provider, sockets, _ = make_provider()
+        try:
+            await provider.respond(turn())
+            await asyncio.sleep(.13)
+            assert sockets[0].closed
+            assert not provider.sessions
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_format_mismatch_closes():
+    async def run():
+        provider, sockets, _ = make_provider(bad_format=True)
+        try:
+            with pytest.raises(ValueError, match="PCM"):
+                await provider.respond(turn())
+            assert sockets[0].closed
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_overlap_rejected():
+    async def run():
+        provider, _, _ = make_provider(silent=True)
+        request = turn()
+        active = asyncio.create_task(provider.respond(request))
+        try:
+            await asyncio.sleep(.015)
+            with pytest.raises(SpeechInputError, match="already running"):
+                await provider.respond(request)
+        finally:
+            active.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await active
+            await provider.aclose()
+    asyncio.run(run())
