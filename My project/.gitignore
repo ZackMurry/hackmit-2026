@@ -52,7 +52,3 @@ crashlytics-build.properties
 *.env.local
 **/Secrets.cs
 **/ApiKeys.asset
-
-# API keys for the conversation loop (copy secrets.example.json)
-/Assets/StreamingAssets/secrets.json
-/Assets/StreamingAssets/secrets.json.meta

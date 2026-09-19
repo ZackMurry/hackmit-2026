@@ -1,34 +1,27 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using System.Text;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
 /// <summary>
 /// The talking part of an NPC: hold the talk key while in range to record the
-/// mic, release to send. Speech -> text (ElevenLabs Scribe / Whisper) -> Claude
-/// in character -> ElevenLabs voice -> <see cref="NpcSpeaker"/> lip-sync.
+/// mic (or press the type key for a text box), send the turn through
+/// <see cref="ConversationClient"/> and show/voice what comes back.
 ///
-/// Claude answers as JSON with the line in the target language, an English
-/// translation, a correction of the learner's mistake, a hint for what to say
-/// next, quests it judges completed and optionally a move to perform. Quests
-/// go to <see cref="QuestManager"/>, moves to <see cref="NpcSchedule"/>, so a
-/// successful "un café, por favor" can send the barista walking.
-/// Subtitles are drawn with IMGUI like the rest of the HUD.
+/// The server does the understanding; this component only applies its reply:
+/// the line is voiced through <see cref="NpcSpeaker"/> (lip-sync), quests go to
+/// <see cref="QuestManager"/>, moves to <see cref="NpcSchedule"/>, and the
+/// translation / correction / hint are drawn as IMGUI subtitles.
 /// </summary>
 [RequireComponent(typeof(NpcSpeaker), typeof(NpcInteractable))]
 public class NpcConversation : MonoBehaviour
 {
     [Header("Character")]
-    [TextArea(3, 8)]
-    public string persona = "a friendly barista at a small café";
-    public string language = "Spanish";
-    [Tooltip("ISO code passed to speech recognition / synthesis.")]
+    [Tooltip("Sent with every turn so the server knows which character is talking.")]
+    public string npcId = "";
+    [Tooltip("ISO language code sent with every turn.")]
     public string languageCode = "es";
-    public string learnerLevel = "beginner (A1-A2)";
-    [Tooltip("ElevenLabs voice id. Empty = ElevenLabsClient.DefaultVoice.")]
-    public string voiceId = "";
     [Tooltip("Said the first time the player walks up. Empty = none.")]
     public string greeting = "";
 
@@ -36,7 +29,7 @@ public class NpcConversation : MonoBehaviour
     public Key talkKey = Key.E;
     [Tooltip("Hold Tab to see the translation and a hint of what to say next.")]
     public Key helpKey = Key.Tab;
-    [Tooltip("Type a line instead of speaking (no mic / STT needed). Enter sends, Esc cancels.")]
+    [Tooltip("Type a line instead of speaking (no mic needed). Enter sends, Esc cancels.")]
     public Key typeKey = Key.T;
     [Tooltip("Taps shorter than this are ignored.")]
     public float minHold = 0.25f;
@@ -54,8 +47,8 @@ public class NpcConversation : MonoBehaviour
     public bool Busy { get; private set; }
     public bool IsRecording => recording != null;
 
-    /// <summary>True when the full loop can run (keys for STT and the LLM).</summary>
-    public bool IsConfigured => Secrets.Instance.HasLlm && Secrets.Instance.HasStt;
+    /// <summary>True when there is somewhere to send turns to (push-to-talk is enabled).</summary>
+    public bool IsConfigured => ConversationClient.Instance != null;
 
     /// <summary>True while the typed-input box is open (cursor is unlocked, player can't move).</summary>
     public bool IsTyping => typing;
@@ -74,21 +67,9 @@ public class NpcConversation : MonoBehaviour
     public Exchange Last { get; private set; }
     public event Action<Exchange> Replied;
 
-    [Serializable]
-    class LlmReply
-    {
-        public string reply = "";
-        public string translation = "";
-        public string correction = "";
-        public string hint = "";
-        public string[] completedQuests = Array.Empty<string>();
-        public string move = "";
-    }
-
     NpcSpeaker speaker;
     NpcInteractable interactable;
     NpcSchedule schedule;
-    readonly List<AnthropicClient.Message> history = new();
     AudioClip recording;
     float recordStart;
     bool greeted;
@@ -123,15 +104,15 @@ public class NpcConversation : MonoBehaviour
         if (keyboard == null || typing)
             return;
 
-        if (Secrets.Instance.HasLlm && interactable.PlayerInRange && !Busy && recording == null
+        if (!IsConfigured)
+            return;
+
+        if (interactable.PlayerInRange && !Busy && recording == null
             && keyboard[typeKey].wasPressedThisFrame && Cursor.lockState == CursorLockMode.Locked)
         {
             BeginTyping();
             return;
         }
-
-        if (!IsConfigured)
-            return;
 
         if (recording == null)
         {
@@ -163,7 +144,7 @@ public class NpcConversation : MonoBehaviour
         Cursor.visible = false;
         string line = typed.Trim();
         if (send && line.Length > 0)
-            StartCoroutine(Respond(line));
+            StartCoroutine(SendTurn(new ConversationClient.Turn { text = line }));
     }
 
     void StartRecording()
@@ -208,55 +189,34 @@ public class NpcConversation : MonoBehaviour
             return;
         }
 
-        StartCoroutine(Process(WavUtility.FromSamples(samples, channels, rate)));
+        StartCoroutine(SendTurn(new ConversationClient.Turn { audioWav = WavUtility.FromSamples(samples, channels, rate) }));
     }
 
-    IEnumerator Process(byte[] wav)
+    /// <summary>Send one learner turn to the server and act on the reply. Usable from code without a mic.</summary>
+    public IEnumerator SendTurn(ConversationClient.Turn turn)
     {
+        var client = ConversationClient.Instance;
+        if (client == null)
+            yield break;
+
         Busy = true;
-        Status = "Understanding…";
+        Status = turn.audioWav != null ? "Understanding…" : "Thinking…";
+        turn.npcId = npcId;
+        turn.languageCode = languageCode;
 
-        string heard = null, error = null;
-        var stt = Secrets.Instance.sttProvider == "openai"
-            ? OpenAiClient.Transcribe(wav, languageCode, t => heard = t, e => error = e)
-            : ElevenLabsClient.Transcribe(wav, languageCode, t => heard = t, e => error = e);
-        yield return stt;
-
-        if (error != null || string.IsNullOrEmpty(heard))
+        ConversationClient.Reply reply = null;
+        string error = null;
+        yield return client.Send(turn, r => reply = r, e => error = e);
+        if (error != null || reply == null)
         {
-            Fail(error ?? "Didn't catch that");
+            Fail(error ?? "empty reply");
             yield break;
         }
-
-        Debug.Log($"{name} heard: {heard}");
-        yield return Respond(heard);
-    }
-
-    /// <summary>Send a learner line (already text) through the brain and voice. Usable without a mic.</summary>
-    public IEnumerator Respond(string heard)
-    {
-        Busy = true;
-        Status = "Thinking…";
-
-        history.Add(new AnthropicClient.Message("user", heard));
-        TrimHistory();
-
-        string raw = null, error = null;
-        yield return AnthropicClient.Complete(BuildSystemPrompt(), history, r => raw = r, e => error = e);
-        if (error != null)
-        {
-            history.RemoveAt(history.Count - 1);
-            Fail(error);
-            yield break;
-        }
-
-        var reply = ParseReply(raw);
-        history.Add(new AnthropicClient.Message("assistant", raw));
 
         var exchange = new Exchange
         {
-            heard = heard,
-            reply = reply.reply,
+            heard = string.IsNullOrEmpty(reply.heard) ? turn.text : reply.heard,
+            reply = reply.text,
             translation = reply.translation,
             correction = reply.correction,
             hint = reply.hint,
@@ -270,7 +230,7 @@ public class NpcConversation : MonoBehaviour
                 if (!string.IsNullOrEmpty(id))
                     QuestManager.Instance.Complete(id);
 
-        yield return Say(reply.reply);
+        yield return Say(reply.text, reply.clip);
 
         if (!string.IsNullOrEmpty(reply.move) && schedule != null)
             schedule.Trigger(reply.move);
@@ -287,20 +247,13 @@ public class NpcConversation : MonoBehaviour
         Busy = false;
     }
 
-    /// <summary>Voice a line through ElevenLabs, or the placeholder blah-blah when TTS isn't set up.</summary>
-    IEnumerator Say(string text)
+    /// <summary>Voice a line: the server's audio when it sent some, else the placeholder blah-blah.</summary>
+    IEnumerator Say(string text, AudioClip clip = null)
     {
-        if (string.IsNullOrEmpty(text))
+        if (string.IsNullOrEmpty(text) && clip == null)
             yield break;
 
         Status = "Speaking…";
-        AudioClip clip = null;
-        string error = null;
-        if (Secrets.Instance.HasTts)
-            yield return ElevenLabsClient.Speak(text, voiceId, languageCode, c => clip = c, e => error = e);
-        if (error != null)
-            Debug.LogWarning($"{name}: {error}; using placeholder voice.");
-
         if (clip != null)
             speaker.Speak(clip);
         else
@@ -333,77 +286,6 @@ public class NpcConversation : MonoBehaviour
         yield return new WaitForSeconds(seconds);
         if (Status == text)
             Status = "";
-    }
-
-    void TrimHistory()
-    {
-        // Keep the last ~12 exchanges; drop pairs so it always starts with the user.
-        while (history.Count > 24)
-            history.RemoveRange(0, 2);
-        while (history.Count > 0 && history[0].role != "user")
-            history.RemoveAt(0);
-    }
-
-    string BuildSystemPrompt()
-    {
-        var sb = new StringBuilder();
-        string npcName = interactable.displayName;
-        sb.AppendLine($"You are {npcName}, {persona}. You are a character in an immersive {language}-learning game. " +
-                      $"The player is a {language} learner at {learnerLevel} level who is talking to you out loud; " +
-                      $"their words arrive via speech recognition, so tolerate small transcription errors.");
-        sb.AppendLine($"Speak only {language} in \"reply\": one to three short, natural spoken sentences, no stage directions, no lists. " +
-                      $"Stay in character and in the scene. Use simple vocabulary suited to the learner's level; if they struggle or " +
-                      $"speak English, reply in slow, simple {language} and offer a way forward (e.g. a choice). Never break character to lecture.");
-        if (greeted && !string.IsNullOrEmpty(greeting))
-            sb.AppendLine($"You already greeted the learner with: \"{greeting}\"");
-
-        var quests = QuestManager.Instance?.Quests?.quests;
-        if (quests != null && quests.Length > 0)
-        {
-            sb.AppendLine("The learner has these goals. When the learner has genuinely achieved one through what they said " +
-                          "(not merely mentioned it), include its id in \"completedQuests\":");
-            foreach (var q in quests)
-                sb.AppendLine($"- {q.id}: {q.text} [{(q.IsDone ? "done" : "todo")}]");
-        }
-
-        if (schedule != null && schedule.moves.Length > 0)
-        {
-            sb.AppendLine("You can perform one of these physical actions by putting its id in \"move\" (or \"\" for none). " +
-                          "Only do so when it fits the conversation:");
-            foreach (var m in schedule.moves)
-                if (!string.IsNullOrEmpty(m.id))
-                    sb.AppendLine($"- {m.id}" + (m.trigger == NpcMove.TriggerQuest ? $" (normally happens after quest {m.after})" : ""));
-        }
-
-        sb.AppendLine("Respond with ONLY a JSON object, no markdown fences, with exactly these keys: " +
-                      $"\"reply\" (your line, in {language}), " +
-                      "\"translation\" (English translation of reply), " +
-                      $"\"correction\" (if the learner made a {language} mistake worth fixing: the corrected phrase in {language} " +
-                      "plus a one-line English note; otherwise \"\"), " +
-                      $"\"hint\" (one natural thing the learner could say next, in {language}), " +
-                      "\"completedQuests\" (array of quest ids, usually []), " +
-                      "\"move\" (action id or \"\").");
-        return sb.ToString();
-    }
-
-    static LlmReply ParseReply(string raw)
-    {
-        string json = raw?.Trim() ?? "";
-        int open = json.IndexOf('{');
-        int close = json.LastIndexOf('}');
-        if (open >= 0 && close > open)
-            json = json.Substring(open, close - open + 1);
-
-        try
-        {
-            var parsed = JsonUtility.FromJson<LlmReply>(json);
-            if (parsed != null && !string.IsNullOrEmpty(parsed.reply))
-                return parsed;
-        }
-        catch { /* fall through */ }
-
-        // Not JSON: treat the whole thing as the spoken line so the conversation still flows.
-        return new LlmReply { reply = raw ?? "" };
     }
 
     void DrawTypingBox()
