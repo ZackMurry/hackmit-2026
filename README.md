@@ -10,46 +10,26 @@ Generated world models + immersive language learning
 
 ## Talking to NPCs
 
-Walk up to an NPC and **hold E** to speak (release to send), or press **T** to type a line.
-The client only records the mic / takes the typed line and displays the answer; speech
-recognition, the character brain and the voice are the server's job. **Hold Tab** under the
-subtitles to see the translation, correction and hint the server sent back.
+Start the orchestrator (`python -m orchestrator`, see `docs/api.md`), press Play, walk up to
+an NPC and **hold E** to speak; release to send. The client only records the mic and displays
+what comes back — speech recognition, the character and the voice are the server's.
 
-`ConversationClient` (on the `Conversation` object in the scene) POSTs each turn to
-`{serverUrl}/turn` as multipart form data:
+- `ConversationClient` (on the `Conversation` object; `serverUrl`, default `http://127.0.0.1:8765`)
+  POSTs each recording as `audio/wav` to `/v1/speech?session_id=…&npc_id=…&response_format=json`
+  and plays the returned audio through the NPC's lip-sync. `user_transcript` / `agent_transcript`
+  are subtitled at the bottom of the screen. Each NPC keeps its own `session_id` (conversation
+  memory) and closes it when the scene ends. WAV, raw PCM, MP3 and OGG replies are all decoded.
+- `ScenarioClient` (same object) loads a saved scenario (`scenarioId`) or generates one from
+  `prompt` / `language` / `level` via `/v1/scenarios` when the scene starts, then applies it:
+  goals → the quest list, characters → NPC names, ids and opening lines (matched by id, else by
+  order in `npcs.json`), and `scenario_id` is attached to every speech turn. The last generated
+  id is remembered in PlayerPrefs so replaying doesn't regenerate.
+- NPC `id`s in `npcs.json` are the server's `npc_id`s and need a configured agent
+  (`AGENT_ID_LUIS`, `AGENT_ID_MARIANA`, …).
 
-| Field               |                                                  |
-| ------------------- | ------------------------------------------------ |
-| `npcId`, `language` | From `npcs.json` (`id`, `languageCode`).         |
-| `audio`             | 16-bit PCM WAV of the learner (push-to-talk), or |
-| `text`              | the typed line.                                  |
-
-and expects JSON back — everything except `text` is optional:
-
-```json
-{
-  "heard": "un café por favor",
-  "text": "¡Claro! ¿Con leche o solo?",
-  "captions": [
-    { "text": "¡Claro!", "start": 0.0, "end": 0.6 },
-    { "text": "¿Con leche o solo?", "start": 0.6, "end": 1.9 }
-  ],
-  "translation": "Sure! With milk or black?",
-  "correction": "",
-  "hint": "Con leche, por favor.",
-  "completedQuests": ["order_coffee"],
-  "move": "",
-  "audio": "<base64 16-bit mono PCM>",
-  "audioSampleRate": 24000
-}
-```
-
-`text` is the caption, subtitled and lip-synced (with `audio` if present, else a placeholder voice);
-`captions` optionally splits it into timed segments (seconds from audio start) that are shown one
-at a time in sync with playback, falling back to the whole `text` once speech ends or when omitted.
-`completedQuests` ticks the quest HUD (which can trigger NPC moves), and `move` starts one of
-the NPC's `moves` directly. With `serverUrl` empty the client answers with canned lines so the
-whole interaction can be tested offline.
+With `serverUrl` empty NPCs answer with canned lines so the interaction can be tested offline.
+Goal completion isn't reported by the API yet, so quests only tick via `quests.json` /
+`QuestManager.Complete`.
 
 ## Content is JSON
 
@@ -62,7 +42,7 @@ and is re-read while the game is running, so you can tune it without leaving Pla
 {
   "title": "Café",
   "quests": [
-    { "id": "order_coffee", "text": "Order a coffee", "status": "todo" }
+    { "id": "order", "text": "Order something in Spanish", "status": "todo" }
   ]
 }
 ```
@@ -79,8 +59,8 @@ lip-synced speech, E-to-talk, walking, schedule).
 {
   "npcs": [
     {
-      "id": "barista",
-      "displayName": "Sofía",
+      "id": "luis",
+      "displayName": "Luis",
       "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
       "position": { "x": 0.85, "y": -1.52, "z": 2.992 },
       "yaw": 180,
@@ -91,7 +71,7 @@ lip-synced speech, E-to-talk, walking, schedule).
         {
           "id": "bring_coffee",
           "trigger": "quest",
-          "after": "order_coffee",
+          "after": "order",
           "delay": 4,
           "path": [
             { "x": 1.0, "y": -1.52, "z": 2.0 },
@@ -112,14 +92,14 @@ lip-synced speech, E-to-talk, walking, schedule).
 | `idleClips`, `walkClip`    | Resources paths of mocap clips. No walk clip → procedural gait.                                         |
 | `languageCode`, `greeting` | Language code sent to the server; line said when the player first walks up.                             |
 | `moves[].trigger`          | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`). |
-| `moves[].delay`            | Seconds to wait after the trigger, e.g. walk over 4 s after `order_coffee` is done.                     |
+| `moves[].delay`            | Seconds to wait after the trigger, e.g. walk over 4 s after `order` is done.                     |
 | `moves[].path`             | World-space waypoints. Y is a hint; feet snap to the collider below.                                    |
 | `moves[].speed`            | Override m/s for this move (0 = NPC default).                                                           |
 | `moves[].endYaw`           | Heading to turn to on arrival; omit to keep the walking direction.                                      |
 | `moves[].loop`             | Ping-pong the path forever (patrols).                                                                   |
 | `moves[].once`             | Default `true`; set `false` to re-fire every time the trigger happens.                                  |
 
-From code: `NpcManager.Instance.WalkTo("barista", new Vector3(1, -1.52f, -1.5f))` or
+From code: `NpcManager.Instance.WalkTo("luis", new Vector3(1, -1.52f, -1.5f))` or
 `npc.GetComponent<NpcSchedule>().Trigger("bring_coffee")`.
 
 World coordinates: the splat is rendered with scale `(2, -2, 2)`, so `world = raw_spz * (2, -2, 2)`.

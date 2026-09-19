@@ -89,6 +89,15 @@ public class QuestManager : MonoBehaviour
 
     public Quest Find(string id) => Array.Find(Quests.quests, q => q.id == id);
 
+    /// <summary>Swap in a whole new quest list (e.g. a generated scenario's goals) and persist it like any other change.</summary>
+    public void Replace(QuestList list)
+    {
+        Quests = list ?? new QuestList();
+        if (saveOnChange)
+            Save();
+        Changed?.Invoke();
+    }
+
     /// <summary>Mark a quest done. Returns false if the id is unknown.</summary>
     public bool Complete(string id) => SetStatus(id, Quest.Done);
 

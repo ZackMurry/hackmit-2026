@@ -1,13 +1,14 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 using UnityEngine.Networking;
 
 /// <summary>
-/// The one place the game talks to the conversation server. The client only
-/// records/types the learner's line and displays what comes back; speech
-/// recognition, the character brain and voice synthesis all live server-side.
+/// Unity side of the Scenar.io orchestrator (<c>orchestrator/</c>, see docs/api.md).
+/// One speech turn = POST the learner's WAV to <c>/v1/speech</c> and get back the
+/// NPC's audio plus both transcripts. The server owns speech recognition, the
+/// character and the voice; this client only records and displays.
 ///
 /// Without a <see cref="serverUrl"/> it answers with canned lines so the
 /// interaction and HUD can be exercised offline.
@@ -16,55 +17,57 @@ public class ConversationClient : MonoBehaviour
 {
     public static ConversationClient Instance { get; private set; }
 
-    [Tooltip("Base URL of the conversation server, e.g. http://localhost:8000. Empty = canned offline replies.")]
-    public string serverUrl = "";
-    public int timeoutSeconds = 60;
+    [Tooltip("Base URL of the orchestrator (python -m orchestrator). Empty = canned offline replies.")]
+    public string serverUrl = "http://127.0.0.1:8765";
+    [Tooltip("Saved scenario to give the NPCs as context; set automatically by ScenarioClient. Empty = none.")]
+    public string scenarioId = "";
+    [Tooltip("Provider calls are capped at 60 s server-side.")]
+    public int timeoutSeconds = 75;
 
-    /// <summary>One learner turn: either a typed line or a WAV recording.</summary>
+    /// <summary>One learner turn: a WAV recording for one NPC within one session.</summary>
     public class Turn
     {
         public string npcId;
-        public string languageCode;
-        public string text;      // typed line, or null
-        public byte[] audioWav;  // 16-bit PCM WAV, or null
+        public string sessionId;   // client-generated UUID, reused for conversation memory
+        public byte[] audioWav;    // 16-bit PCM WAV
+    }
+
+    /// <summary>What the client hands back to the NPC.</summary>
+    public class Reply
+    {
+        public string heard = "";  // user_transcript (may be empty)
+        public string text = "";   // agent_transcript: the caption (may be empty)
+        public AudioClip clip;     // decoded NPC audio, or null
     }
 
 #pragma warning disable 0649 // DTO fields are filled by JsonUtility
-    /// <summary>One timed caption segment; times are seconds from the start of the NPC's audio.</summary>
     [Serializable]
-    public class Caption
+    class SpeechResponse
     {
-        public string text = "";
-        public float start;
-        public float end;
+        public string session_id;
+        public string npc_id;
+        public string audio_base64;
+        public string media_type;
+        public int sample_rate;
+        public string user_transcript;
+        public string agent_transcript;
     }
 
-    /// <summary>What the server returns for a turn. Everything but <c>text</c> is optional.</summary>
     [Serializable]
-    public class Reply
+    class ErrorResponse
     {
-        public string heard = "";        // transcript of the learner (empty when the turn was typed)
-        public string text = "";         // NPC line in the target language; the full caption
-        public Caption[] captions = Array.Empty<Caption>(); // optional timed segments of text, shown in sync with audio
-        public string translation = "";
-        public string correction = "";
-        public string hint = "";
-        public string[] completedQuests = Array.Empty<string>();
-        public string move = "";
-        public string audio = "";        // base64 16-bit mono PCM of the NPC line, or empty
-        public int audioSampleRate = 24000;
-
-        [NonSerialized] public AudioClip clip; // decoded from audio by the client
+        public string detail;
     }
 #pragma warning restore 0649
 
     public bool IsOnline => !string.IsNullOrEmpty(serverUrl);
+    string Base => serverUrl.TrimEnd('/');
 
     static readonly string[] CannedLines =
     {
         "Claro, ¿algo más?",
         "Muy bien. ¿Quieres azúcar?",
-        "Perfecto, ahora mismo te lo preparo.",
+        "Ahorita te lo paso, joven.",
         "¿De dónde eres?",
     };
     int canned;
@@ -87,70 +90,120 @@ public class ConversationClient : MonoBehaviour
         if (!IsOnline)
         {
             yield return new WaitForSeconds(0.6f);
-            onDone?.Invoke(Canned(turn));
+            onDone?.Invoke(new Reply { heard = "(voice, no server connected)", text = CannedLines[canned++ % CannedLines.Length] });
             yield break;
         }
 
-        var form = new List<IMultipartFormSection>
-        {
-            new MultipartFormDataSection("npcId", turn.npcId ?? ""),
-            new MultipartFormDataSection("language", turn.languageCode ?? ""),
-        };
-        if (turn.audioWav != null)
-            form.Add(new MultipartFormFileSection("audio", turn.audioWav, "speech.wav", "audio/wav"));
-        if (!string.IsNullOrEmpty(turn.text))
-            form.Add(new MultipartFormDataSection("text", turn.text));
+        string url = $"{Base}/v1/speech?session_id={turn.sessionId}&npc_id={UnityWebRequest.EscapeURL(turn.npcId)}&response_format=json";
+        if (!string.IsNullOrEmpty(scenarioId))
+            url += "&scenario_id=" + UnityWebRequest.EscapeURL(scenarioId);
 
-        using var req = UnityWebRequest.Post(serverUrl.TrimEnd('/') + "/turn", form);
-        req.timeout = timeoutSeconds;
+        using var req = new UnityWebRequest(url, "POST")
+        {
+            uploadHandler = new UploadHandlerRaw(turn.audioWav) { contentType = "audio/wav" },
+            downloadHandler = new DownloadHandlerBuffer(),
+            timeout = timeoutSeconds,
+        };
         yield return req.SendWebRequest();
 
         if (req.result != UnityWebRequest.Result.Success)
         {
-            string body = req.downloadHandler?.text;
-            onError?.Invoke($"server {req.responseCode}: {(string.IsNullOrEmpty(body) ? req.error : Truncate(body, 200))}");
+            onError?.Invoke(Describe(req));
             yield break;
         }
 
-        Reply reply = null;
-        try { reply = JsonUtility.FromJson<Reply>(req.downloadHandler.text); } catch { }
-        if (reply == null)
+        SpeechResponse parsed = null;
+        try { parsed = JsonUtility.FromJson<SpeechResponse>(req.downloadHandler.text); } catch { }
+        if (parsed == null)
         {
             onError?.Invoke("server sent malformed reply");
             yield break;
         }
 
-        if (!string.IsNullOrEmpty(reply.audio))
+        var reply = new Reply { heard = parsed.user_transcript ?? "", text = parsed.agent_transcript ?? "" };
+        if (!string.IsNullOrEmpty(parsed.audio_base64))
         {
-            try { reply.clip = WavUtility.ClipFromPcm16(Convert.FromBase64String(reply.audio), reply.audioSampleRate); }
-            catch (Exception e) { Debug.LogWarning($"ConversationClient: bad audio in reply: {e.Message}"); }
-            reply.audio = ""; // don't keep the base64 around
+            byte[] bytes = null;
+            try { bytes = Convert.FromBase64String(parsed.audio_base64); }
+            catch (Exception e) { Debug.LogWarning($"ConversationClient: bad audio_base64: {e.Message}"); }
+            if (bytes != null)
+                yield return Decode(bytes, parsed.media_type, parsed.sample_rate, c => reply.clip = c);
         }
         onDone?.Invoke(reply);
     }
 
-    Reply Canned(Turn turn)
+    /// <summary>Close the server-side session (frees the provider connection). Fire and forget.</summary>
+    public IEnumerator EndSession(string sessionId)
     {
-        string line = CannedLines[canned++ % CannedLines.Length];
-        // Two timed segments over the placeholder voice's duration, so caption sync is visible offline.
-        float seconds = Mathf.Clamp(line.Length / 12f, 1f, 8f);
-        int split = line.IndexOf(' ', line.Length / 2);
-        var captions = split < 0
-            ? new[] { new Caption { text = line, start = 0f, end = seconds } }
-            : new[]
-            {
-                new Caption { text = line.Substring(0, split), start = 0f, end = seconds / 2f },
-                new Caption { text = line.Substring(split + 1), start = seconds / 2f, end = seconds },
-            };
-        return new Reply
-        {
-            heard = turn.text ?? "(voice, no server connected)",
-            text = line,
-            captions = captions,
-            translation = "(offline canned reply)",
-            hint = "Un café con leche, por favor.",
-        };
+        if (!IsOnline || string.IsNullOrEmpty(sessionId))
+            yield break;
+        using var req = UnityWebRequest.Delete($"{Base}/v1/speech/sessions/{sessionId}");
+        req.timeout = 10;
+        yield return req.SendWebRequest();
     }
 
-    static string Truncate(string s, int max) => s.Length <= max ? s : s.Substring(0, max) + "…";
+    /// <summary>Turn the server's audio into a clip: WAV and raw PCM in-process, other containers via Unity's decoder.</summary>
+    static IEnumerator Decode(byte[] bytes, string mediaType, int sampleRate, Action<AudioClip> onDone)
+    {
+        mediaType = (mediaType ?? "").ToLowerInvariant();
+        switch (mediaType)
+        {
+            case "audio/wav":
+            case "audio/x-wav":
+                onDone(WavUtility.ClipFromWav(bytes, "npc-reply"));
+                yield break;
+            case "audio/pcm":
+                onDone(WavUtility.ClipFromPcm16(bytes, sampleRate > 0 ? sampleRate : 16000, "npc-reply"));
+                yield break;
+        }
+
+        // MP3 / OGG: Unity can only decode these from a URL, so bounce through a temp file.
+        AudioType type = mediaType switch
+        {
+            "audio/mpeg" or "audio/mp4" => AudioType.MPEG,
+            "audio/ogg" or "audio/webm" => AudioType.OGGVORBIS,
+            _ => AudioType.UNKNOWN,
+        };
+        string path = Path.Combine(Application.temporaryCachePath, "npc-reply" + (type == AudioType.MPEG ? ".mp3" : ".ogg"));
+        try { File.WriteAllBytes(path, bytes); }
+        catch (Exception e)
+        {
+            Debug.LogWarning($"ConversationClient: could not write temp audio: {e.Message}");
+            onDone(null);
+            yield break;
+        }
+        using var req = UnityWebRequestMultimedia.GetAudioClip("file://" + path, type);
+        yield return req.SendWebRequest();
+        if (req.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogWarning($"ConversationClient: could not decode {mediaType}: {req.error}");
+            onDone(null);
+            yield break;
+        }
+        onDone(DownloadHandlerAudioClip.GetContent(req));
+    }
+
+    /// <summary>Human-readable failure, unwrapping FastAPI's {"detail": ...}.</summary>
+    public static string Describe(UnityWebRequest req)
+    {
+        string body = req.downloadHandler?.text;
+        if (!string.IsNullOrEmpty(body))
+        {
+            try
+            {
+                var err = JsonUtility.FromJson<ErrorResponse>(body);
+                if (!string.IsNullOrEmpty(err?.detail))
+                    body = err.detail;
+            }
+            catch { }
+        }
+        if (string.IsNullOrEmpty(body))
+            body = req.error ?? "unknown error";
+        return req.responseCode switch
+        {
+            0 => $"server unreachable ({req.error})",
+            503 => "server: speech not configured (" + body + ")",
+            _ => $"server {req.responseCode}: {(body.Length > 200 ? body.Substring(0, 200) + "…" : body)}",
+        };
+    }
 }

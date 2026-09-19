@@ -6,31 +6,22 @@ using UnityEngine.InputSystem;
 
 /// <summary>
 /// The talking part of an NPC: hold the talk key while in range to record the
-/// mic (or press the type key for a text box), send the turn through
-/// <see cref="ConversationClient"/> and show/voice what comes back.
-///
-/// The server does the understanding; this component only applies its reply:
-/// the line is voiced through <see cref="NpcSpeaker"/> (lip-sync), quests go to
-/// <see cref="QuestManager"/>, moves to <see cref="NpcSchedule"/>, and the
-/// translation / correction / hint are drawn as IMGUI subtitles.
+/// mic, release to send the turn through <see cref="ConversationClient"/>, then
+/// voice the NPC's audio through <see cref="NpcSpeaker"/> (lip-sync) and subtitle
+/// both transcripts. Each NPC keeps its own server session so the character
+/// remembers the conversation.
 /// </summary>
 [RequireComponent(typeof(NpcSpeaker), typeof(NpcInteractable))]
 public class NpcConversation : MonoBehaviour
 {
     [Header("Character")]
-    [Tooltip("Sent with every turn so the server knows which character is talking.")]
+    [Tooltip("npc_id sent with every turn; must match an agent configured on the server (e.g. luis, mariana).")]
     public string npcId = "";
-    [Tooltip("ISO language code sent with every turn.")]
-    public string languageCode = "es";
-    [Tooltip("Said the first time the player walks up. Empty = none.")]
+    [Tooltip("Said (placeholder voice) the first time the player walks up. Empty = none.")]
     public string greeting = "";
 
     [Header("Input")]
     public Key talkKey = Key.E;
-    [Tooltip("Hold Tab to see the translation and a hint of what to say next.")]
-    public Key helpKey = Key.Tab;
-    [Tooltip("Type a line instead of speaking (no mic needed). Enter sends, Esc cancels.")]
-    public Key typeKey = Key.T;
     [Tooltip("Taps shorter than this are ignored.")]
     public float minHold = 0.25f;
     public int maxRecordSeconds = 20;
@@ -50,18 +41,13 @@ public class NpcConversation : MonoBehaviour
     /// <summary>True when there is somewhere to send turns to (push-to-talk is enabled).</summary>
     public bool IsConfigured => ConversationClient.Instance != null;
 
-    /// <summary>True while the typed-input box is open (cursor is unlocked, player can't move).</summary>
-    public bool IsTyping => typing;
+    /// <summary>Client-generated UUID reused for every turn with this NPC (server-side memory).</summary>
+    public string SessionId { get; private set; }
 
     public class Exchange
     {
-        public string heard;        // what the learner said (transcript)
-        public string reply;        // NPC line in the target language (full caption)
-        public ConversationClient.Caption[] captions; // timed segments of reply, may be empty
-        public float spokenAt;      // Time.time the NPC's audio started, for caption timing
-        public string translation;
-        public string correction;
-        public string hint;
+        public string heard;   // what the learner said (server transcript)
+        public string reply;   // NPC line (server transcript = caption)
         public float time;
     }
 
@@ -71,20 +57,23 @@ public class NpcConversation : MonoBehaviour
 
     NpcSpeaker speaker;
     NpcInteractable interactable;
-    NpcSchedule schedule;
     AudioClip recording;
     float recordStart;
     bool greeted;
-    bool typing;
-    string typed = "";
-    int typingStartedFrame;
-    GUIStyle boxStyle, heardStyle, replyStyle, noteStyle;
+    GUIStyle boxStyle, heardStyle, replyStyle;
 
     void Awake()
     {
         speaker = GetComponent<NpcSpeaker>();
         interactable = GetComponent<NpcInteractable>();
-        schedule = GetComponent<NpcSchedule>();
+        SessionId = Guid.NewGuid().ToString();
+    }
+
+    void OnDestroy()
+    {
+        var client = ConversationClient.Instance;
+        if (client != null && client.isActiveAndEnabled)
+            client.StartCoroutine(client.EndSession(SessionId));
     }
 
     void Update()
@@ -95,58 +84,20 @@ public class NpcConversation : MonoBehaviour
             StartCoroutine(SayGreeting());
         }
 
-        if (typing && Cursor.lockState == CursorLockMode.Locked)
-        {
-            // Clicking the text box makes FirstPersonController grab the cursor back; keep it free.
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
-        }
-
         var keyboard = Keyboard.current;
-        if (keyboard == null || typing)
+        if (keyboard == null || !IsConfigured)
             return;
-
-        if (!IsConfigured)
-            return;
-
-        if (interactable.PlayerInRange && !Busy && recording == null
-            && keyboard[typeKey].wasPressedThisFrame && Cursor.lockState == CursorLockMode.Locked)
-        {
-            BeginTyping();
-            return;
-        }
 
         if (recording == null)
         {
-            if (interactable.PlayerInRange && !Busy && keyboard[talkKey].wasPressedThisFrame)
+            if (interactable.PlayerInRange && !Busy && keyboard[talkKey].wasPressedThisFrame
+                && Cursor.lockState == CursorLockMode.Locked)
                 StartRecording();
             return;
         }
 
         if (keyboard[talkKey].wasReleasedThisFrame || Time.time - recordStart >= maxRecordSeconds)
             StopRecording();
-    }
-
-    void BeginTyping()
-    {
-        typing = true;
-        typed = "";
-        typingStartedFrame = Time.frameCount;
-        Status = "Type your line, Enter to send";
-        // FirstPersonController ignores input while the cursor is free and re-locks on click.
-        Cursor.lockState = CursorLockMode.None;
-        Cursor.visible = true;
-    }
-
-    void EndTyping(bool send)
-    {
-        typing = false;
-        Status = "";
-        Cursor.lockState = CursorLockMode.Locked;
-        Cursor.visible = false;
-        string line = typed.Trim();
-        if (send && line.Length > 0)
-            StartCoroutine(SendTurn(new ConversationClient.Turn { text = line }));
     }
 
     void StartRecording()
@@ -191,52 +142,33 @@ public class NpcConversation : MonoBehaviour
             return;
         }
 
-        StartCoroutine(SendTurn(new ConversationClient.Turn { audioWav = WavUtility.FromSamples(samples, channels, rate) }));
+        StartCoroutine(SendTurn(WavUtility.FromSamples(samples, channels, rate)));
     }
 
-    /// <summary>Send one learner turn to the server and act on the reply. Usable from code without a mic.</summary>
-    public IEnumerator SendTurn(ConversationClient.Turn turn)
+    /// <summary>Send one recorded turn to the server and voice/subtitle the reply. Usable from code with any WAV.</summary>
+    public IEnumerator SendTurn(byte[] wav)
     {
         var client = ConversationClient.Instance;
         if (client == null)
             yield break;
 
         Busy = true;
-        Status = turn.audioWav != null ? "Understanding…" : "Thinking…";
-        turn.npcId = npcId;
-        turn.languageCode = languageCode;
+        Status = "Thinking…";
 
         ConversationClient.Reply reply = null;
         string error = null;
-        yield return client.Send(turn, r => reply = r, e => error = e);
+        yield return client.Send(new ConversationClient.Turn { npcId = npcId, sessionId = SessionId, audioWav = wav },
+                                 r => reply = r, e => error = e);
         if (error != null || reply == null)
         {
             Fail(error ?? "empty reply");
             yield break;
         }
 
-        var exchange = new Exchange
-        {
-            heard = string.IsNullOrEmpty(reply.heard) ? turn.text : reply.heard,
-            reply = reply.text,
-            captions = reply.captions,
-            translation = reply.translation,
-            correction = reply.correction,
-            hint = reply.hint,
-            time = Time.time,
-        };
-        Last = exchange;
-        Replied?.Invoke(exchange);
-
-        if (reply.completedQuests != null && QuestManager.Instance != null)
-            foreach (var id in reply.completedQuests)
-                if (!string.IsNullOrEmpty(id))
-                    QuestManager.Instance.Complete(id);
+        Last = new Exchange { heard = reply.heard, reply = reply.text, time = Time.time };
+        Replied?.Invoke(Last);
 
         yield return Say(reply.text, reply.clip);
-
-        if (!string.IsNullOrEmpty(reply.move) && schedule != null)
-            schedule.Trigger(reply.move);
 
         Status = "";
         Busy = false;
@@ -260,9 +192,7 @@ public class NpcConversation : MonoBehaviour
         if (clip != null)
             speaker.Speak(clip);
         else
-            speaker.SpeakTest(Mathf.Clamp(text.Length / 12f, 1f, 8f));
-        if (Last != null)
-            Last.spokenAt = Time.time;
+            speaker.SpeakTest(Mathf.Clamp((text ?? "").Length / 12f, 1f, 8f));
 
         // Keep Status/Busy until she has finished so a new recording doesn't cut her off.
         yield return null;
@@ -293,59 +223,8 @@ public class NpcConversation : MonoBehaviour
             Status = "";
     }
 
-    /// <summary>The caption segment for the current playback position, or the whole line when there are no timed captions / speech is over.</summary>
-    string CurrentCaption()
-    {
-        var captions = Last.captions;
-        if (captions == null || captions.Length == 0 || !speaker.IsSpeaking)
-            return Last.reply;
-
-        float t = Time.time - Last.spokenAt;
-        ConversationClient.Caption current = null;
-        foreach (var c in captions)
-            if (c != null && t >= c.start && (current == null || c.start >= current.start))
-                current = c;
-        if (current == null)
-            return "";                       // before the first segment starts
-        return t < current.end || current.end <= current.start ? current.text : "";
-    }
-
-    void DrawTypingBox()
-    {
-        var e = Event.current;
-        // The key that opened the box arrives as an IMGUI event too; don't type it.
-        if (e.type == EventType.KeyDown && Time.frameCount <= typingStartedFrame + 1)
-        {
-            e.Use();
-            return;
-        }
-        if (e.type == EventType.KeyDown && (e.keyCode == KeyCode.Return || e.keyCode == KeyCode.KeypadEnter))
-        {
-            e.Use();
-            EndTyping(send: true);
-            return;
-        }
-        if (e.type == EventType.KeyDown && e.keyCode == KeyCode.Escape)
-        {
-            e.Use();
-            EndTyping(send: false);
-            return;
-        }
-
-        float width = Mathf.Min(Screen.width * 0.6f, 800f);
-        var rect = new Rect((Screen.width - width) / 2f, Screen.height * 0.45f, width, 70f);
-        GUI.Box(rect, $"Say something to {interactable.displayName} (Enter to send, Esc to cancel)");
-        var field = new Rect(rect.x + 12f, rect.y + 32f, width - 24f, 26f);
-        GUI.SetNextControlName("npc-typed-line");
-        typed = GUI.TextField(field, typed, 200);
-        GUI.FocusControl("npc-typed-line");
-    }
-
     void OnGUI()
     {
-        if (typing)
-            DrawTypingBox();
-
         if (Last == null || Cursor.lockState != CursorLockMode.Locked)
             return;
         bool recent = Time.time - Last.time < subtitleSeconds || speaker.IsSpeaking || Busy;
@@ -359,25 +238,15 @@ public class NpcConversation : MonoBehaviour
             replyStyle.normal.textColor = Color.white;
             heardStyle = new GUIStyle(replyStyle) { fontStyle = FontStyle.Normal, fontSize = fontSize - 3 };
             heardStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
-            noteStyle = new GUIStyle(heardStyle) { fontStyle = FontStyle.Italic };
-            noteStyle.normal.textColor = new Color(1f, 0.9f, 0.55f);
         }
 
-        bool help = Keyboard.current != null && Keyboard.current[helpKey].isPressed;
         var lines = new List<(string, GUIStyle)>();
         if (!string.IsNullOrEmpty(Last.heard))
             lines.Add(($"You: {Last.heard}", heardStyle));
-        string caption = CurrentCaption();
-        if (!string.IsNullOrEmpty(caption))
-            lines.Add(($"{interactable.displayName}: {caption}", replyStyle));
-        if (help && !string.IsNullOrEmpty(Last.translation))
-            lines.Add(($"“{Last.translation}”", heardStyle));
-        if (!string.IsNullOrEmpty(Last.correction))
-            lines.Add(($"Tip: {Last.correction}", noteStyle));
-        if (help && !string.IsNullOrEmpty(Last.hint))
-            lines.Add(($"Try: {Last.hint}", noteStyle));
-        else if (!help && (!string.IsNullOrEmpty(Last.translation) || !string.IsNullOrEmpty(Last.hint)))
-            lines.Add(($"hold {helpKey} for translation & hint", noteStyle));
+        if (!string.IsNullOrEmpty(Last.reply))
+            lines.Add(($"{interactable.displayName}: {Last.reply}", replyStyle));
+        if (lines.Count == 0)
+            return;
 
         float width = Mathf.Min(Screen.width * 0.7f, 900f);
         float height = boxStyle.padding.vertical;

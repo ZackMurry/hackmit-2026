@@ -53,9 +53,7 @@ public class NpcDefinition
     public string walkClip = "";
 
     [Header("Conversation")]
-    [Tooltip("ISO language code sent to the conversation server with each turn.")]
-    public string languageCode = "es";
-    [Tooltip("Spoken (in the target language) the first time the player walks up.")]
+    [Tooltip("Spoken (placeholder voice) the first time the player walks up. A loaded scenario's opening_line overrides it.")]
     public string greeting = "";
 
     public NpcMove[] moves = Array.Empty<NpcMove>();

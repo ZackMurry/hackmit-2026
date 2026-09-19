@@ -156,8 +156,7 @@ public class NpcManager : MonoBehaviour
         interact.displayName = def.displayName;
 
         var talk = go.AddComponent<NpcConversation>();
-        talk.npcId = id;
-        talk.languageCode = def.languageCode;
+        talk.npcId = id; // must match the server's agent id (AGENT_ID_<ID>)
         talk.greeting = def.greeting ?? "";
 
         var walker = go.AddComponent<NpcWalker>();

@@ -1,20 +1,19 @@
 {
   "npcs": [
     {
-      "id": "barista",
-      "displayName": "Sofía",
+      "id": "luis",
+      "displayName": "Luis",
       "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
       "position": { "x": 0.85, "y": -1.52, "z": 2.992 },
       "yaw": 180,
       "scale": 0.7,
       "walkSpeed": 0.8,
-      "languageCode": "es",
-      "greeting": "¡Hola! Bienvenido a Café Sol. ¿Qué te pongo?",
+      "greeting": "¡Qué tal, joven! ¿Qué te doy?",
       "moves": [
         {
           "id": "bring_coffee",
           "trigger": "quest",
-          "after": "order_coffee",
+          "after": "order",
           "delay": 4,
           "path": [
             { "x": 1.0, "y": -1.52, "z": 2.0 },
@@ -36,27 +35,15 @@
       ]
     },
     {
-      "id": "regular",
-      "displayName": "Lucía",
+      "id": "mariana",
+      "displayName": "Mariana",
       "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
-      "position": { "x": 0.6, "y": -1.52, "z": -4.0 },
-      "yaw": 90,
+      "position": { "x": 2.5, "y": -1.52, "z": -3.0 },
+      "yaw": 270,
       "scale": 0.7,
       "walkSpeed": 0.6,
-      "languageCode": "es",
-      "greeting": "Hola, ¿qué tal? ¿Eres nuevo por aquí?",
-      "moves": [
-        {
-          "id": "pace",
-          "trigger": "start",
-          "delay": 2,
-          "loop": true,
-          "path": [
-            { "x": 0.6, "y": -1.52, "z": -4.0 },
-            { "x": 3.8, "y": -1.52, "z": -4.0 }
-          ]
-        }
-      ]
+      "greeting": "¡Hola! ¿Tú eres con quien quedé? Siéntate, siéntate.",
+      "moves": []
     }
   ]
 }
