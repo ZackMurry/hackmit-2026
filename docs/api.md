@@ -1,23 +1,38 @@
 # Scenar.io API
 
-Python 3.11+. Run from the repository root:
+Python 3.11+, managed with [uv](https://docs.astral.sh/uv/). Run from the repository root:
+
+```sh
+uv sync                      # creates .venv and installs the locked dependencies
+cp orchestrator/.env.example orchestrator/.env   # then fill in the values
+uv run python -m orchestrator
+```
+
+`uv sync` reads `pyproject.toml` and `uv.lock`, so everyone gets the same versions.
+`uv run` re-syncs automatically before executing, and needs no activated virtualenv.
+
+Without uv, the generated exports still work:
 
 ```sh
 python3 -m venv .venv
 .venv/bin/python -m pip install -r orchestrator/requirements-dev.txt
+.venv/bin/python -m orchestrator
+```
+
+Configuration comes from `orchestrator/.env`, or from the environment, which takes
+precedence:
+
+```sh
 export OPENAI_API_KEY='your-key'
 export SCENARIO_MODEL='your-structured-output-capable-model'
 export ELEVENLABS_API_KEY='your-key'
 export AGENT_ID_LUIS='your-teammates-agent-id'
-# Optional: export AGENT_ID_MARIANA='another-agent-id' 
-.venv/bin/python -m orchestrator
+# Optional: export AGENT_ID_MARIANA='another-agent-id'
 ```
 
 The server listens on `127.0.0.1:8765`. Interactive documentation: `/docs`;
 OpenAPI schema: `/openapi.json`; readiness flags: `/health`. Running `python -m orchestrator` loads `orchestrator/.env`; exported environment
-variables take precedence. Copy `orchestrator/.env.example` to that file and fill
-in the keys and agent IDs, or export them as shown above. Direct Uvicorn startup
-requires exported variables. Never commit credentials. This is a local development API, without
+variables take precedence. Never commit credentials. Direct Uvicorn startup requires exported variables. This is a local development API, without
 public authentication or cross-origin browser access configured.
 
 ## Prompt → structured scenario and response
@@ -140,7 +155,7 @@ Errors use `{"detail": ...}`. Statuses: 404 unknown scenario; 413 oversized body
 Provider exception details are not returned to clients.
 
 ```sh
-.venv/bin/python -m pytest orchestrator -q
+uv run pytest
 ```
 
 Tests require no credentials and cover persistence, scenario-to-speech handoff,
