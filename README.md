@@ -27,7 +27,9 @@ what comes back — speech recognition, the character and the voice are the serv
 - NPC `id`s in `npcs.json` are the server's `npc_id`s and need a configured agent
   (`AGENT_ID_LUIS`, `AGENT_ID_MARIANA`, …).
 
-With `serverUrl` empty NPCs answer with canned lines so the interaction can be tested offline.
+Lines without server audio — greetings, and every reply when `serverUrl` is empty — are voiced
+with the prerecorded `tools/sample_es.mp3` (copied to `Assets/Resources/Audio/`), so the
+interaction, audio positioning and lip-sync can be tested offline.
 Goal completion isn't reported by the API yet, so quests only tick via `quests.json` /
 `QuestManager.Complete`.
 

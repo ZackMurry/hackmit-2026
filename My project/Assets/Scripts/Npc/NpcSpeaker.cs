@@ -4,8 +4,9 @@ using UnityEngine;
 
 /// <summary>
 /// Plays speech audio from the NPC's mouth and drives the avatar's mouth
-/// blendshapes from the audio amplitude. This is the ElevenLabs integration
-/// point: turn the TTS response into an AudioClip and call <see cref="Speak"/>.
+/// blendshapes from the audio amplitude. The server's reply audio arrives as an
+/// AudioClip via <see cref="Speak"/>; lines without audio (greetings, offline
+/// canned replies) play the prerecorded sample instead.
 /// </summary>
 [RequireComponent(typeof(NpcAvatarLoader))]
 public class NpcSpeaker : MonoBehaviour
@@ -23,6 +24,12 @@ public class NpcSpeaker : MonoBehaviour
     [Tooltip("Bone the AudioSource is attached to so speech comes from the mouth.")]
     public string mouthBone = "Head";
     public float volume = 1f;
+
+    [Header("Placeholder voice")]
+    [Tooltip("Played for lines that have no server audio. Empty = load placeholderResource.")]
+    public AudioClip placeholderClip;
+    [Tooltip("Resources path of the prerecorded sample (tools/sample_es.mp3).")]
+    public string placeholderResource = "Audio/sample_es";
 
     public bool IsSpeaking => source != null && source.isPlaying;
 
@@ -95,12 +102,28 @@ public class NpcSpeaker : MonoBehaviour
     public void Stop() => source.Stop();
 
     /// <summary>
-    /// Speaks a synthetic "blah blah" so you can test lip-sync and positioning
-    /// before ElevenLabs is wired up.
+    /// Speaks the prerecorded Spanish sample (or a synthetic "blah blah" of
+    /// <paramref name="seconds"/> if the sample is missing) for lines that have
+    /// no server audio, so lip-sync and positioning can be tested.
     /// </summary>
     public void SpeakTest(float seconds = 2.5f)
     {
-        Speak(MakeTestClip(seconds));
+        var clip = Placeholder();
+        Speak(clip != null ? clip : MakeTestClip(seconds));
+    }
+
+    AudioClip Placeholder()
+    {
+        if (placeholderClip == null && !string.IsNullOrEmpty(placeholderResource))
+        {
+            placeholderClip = Resources.Load<AudioClip>(placeholderResource);
+            if (placeholderClip == null)
+            {
+                Debug.LogWarning($"NpcSpeaker: no AudioClip at Resources/{placeholderResource}; using synthetic voice.");
+                placeholderResource = ""; // don't retry every line
+            }
+        }
+        return placeholderClip;
     }
 
     void Update()
