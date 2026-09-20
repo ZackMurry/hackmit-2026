@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -6,9 +7,18 @@ using UnityEngine.InputSystem;
 /// Proximity interaction: when the player is close and roughly facing the NPC,
 /// shows a prompt and fires <see cref="Interacted"/> on E. Hook the conversation
 /// loop (mic -> STT -> LLM -> ElevenLabs -> NpcSpeaker.Speak) to that event.
+/// Only one NPC is <see cref="Focused"/> at a time: with two in reach, the one the
+/// player is looking at most directly wins, except that an NPC mid-turn keeps the
+/// player's attention until the turn is over.
 /// </summary>
 public class NpcInteractable : MonoBehaviour
 {
+    static readonly List<NpcInteractable> all = new();
+    static int arbitratedFrame = -1;
+
+    /// <summary>The one NPC the player can talk to right now, or null.</summary>
+    public static NpcInteractable Focused { get; private set; }
+
     [Tooltip("Shown in the prompt, e.g. 'Press E to talk to Sofía'.")]
     public string displayName = "Sofía";
     public float interactRange = 2.5f;
@@ -40,9 +50,19 @@ public class NpcInteractable : MonoBehaviour
             playerEyes = fpc.cameraTransform != null ? fpc.cameraTransform : fpc.transform;
     }
 
+    void OnEnable() => all.Add(this);
+
+    void OnDisable()
+    {
+        all.Remove(this);
+        if (Focused == this)
+            Focused = null;
+    }
+
     void Update()
     {
-        PlayerInRange = CheckInRange();
+        Arbitrate();
+        PlayerInRange = Focused == this;
         if (!PlayerInRange)
             return;
 
@@ -57,8 +77,34 @@ public class NpcInteractable : MonoBehaviour
         }
     }
 
-    bool CheckInRange()
+    /// <summary>Pick this frame's <see cref="Focused"/> NPC once, whichever instance updates first.</summary>
+    static void Arbitrate()
     {
+        if (arbitratedFrame == Time.frameCount)
+            return;
+        arbitratedFrame = Time.frameCount;
+
+        // Mid-turn (recording, waiting on the server, speaking) the current NPC keeps
+        // the floor as long as the player is still roughly with them.
+        if (Focused != null && Focused.MidTurn && Focused.CheckInRange(out _))
+            return;
+
+        NpcInteractable best = null;
+        float bestAngle = float.PositiveInfinity;
+        foreach (var npc in all)
+            if (npc.CheckInRange(out float angle) && angle < bestAngle)
+            {
+                best = npc;
+                bestAngle = angle;
+            }
+        Focused = best;
+    }
+
+    bool MidTurn => conversation != null && (conversation.Busy || conversation.IsRecording);
+
+    bool CheckInRange(out float angle)
+    {
+        angle = float.PositiveInfinity;
         if (playerEyes == null)
             return false;
 
@@ -68,7 +114,8 @@ public class NpcInteractable : MonoBehaviour
         if (toNpc.magnitude > interactRange)
             return false;
 
-        return Vector3.Angle(playerEyes.forward, toNpc) <= facingAngle;
+        angle = Vector3.Angle(playerEyes.forward, toNpc);
+        return angle <= facingAngle;
     }
 
     void OnGUI()

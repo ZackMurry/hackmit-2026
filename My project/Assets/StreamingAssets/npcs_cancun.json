@@ -43,7 +43,13 @@
             { "x": 0.0, "y": -1.5, "z": 10.5 },
             { "x": 1.6, "y": -1.5, "z": 10.35 }
           ],
-          "endYaw": 130
+          "endYaw": 130,
+          "tell": [
+            { "npc": "luis", "key": "floor", "when": "start",
+              "text": "Maria, the waitress, is walking over to the table to take the order. It is her turn to talk to the customer: keep your next line to one short sentence with no question." },
+            { "npc": "luis", "key": "floor", "when": "arrive",
+              "text": "Maria is standing at the table taking the customer's order. Do not ask the customer anything until she has gone." }
+          ]
         },
         {
           "id": "back_to_counter",
@@ -54,7 +60,11 @@
             { "x": 0.0, "y": -1.5, "z": 10.5 },
             { "x": -0.2, "y": -1.5, "z": 13.8 }
           ],
-          "endYaw": 180
+          "endYaw": 180,
+          "tell": [
+            { "npc": "luis", "key": "floor", "when": "start",
+              "text": "Maria has taken the order and gone back to the counter. The customer is all yours again; carry on as normal." }
+          ]
         }
       ]
     },

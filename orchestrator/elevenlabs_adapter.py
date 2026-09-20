@@ -271,6 +271,8 @@ class ElevenLabsSpeech:
             await session.ws.send(json.dumps({"type": "contextual_update", "text":
                 "Current practice scenario and active character " + request.npc_id + ": " +
                 json.dumps(request.scenario, ensure_ascii=False)}))
+        for text in session.run.notes.get(session.npc_id, {}).values():
+            await session.ws.send(json.dumps({"type": "contextual_update", "text": text}))
 
     async def respond(self, request: SpeechInput) -> SpeechOutput:
         # A client may still be using an older name for a character; the scenario
@@ -338,6 +340,24 @@ class ElevenLabsSpeech:
                 continue
             with suppress(Exception):  # a listener that misses a line is not the turn's problem
                 await other.ws.send(json.dumps({"type": "contextual_update", "text": text[:2000]}))
+
+    async def note(self, run_id: str, npc_id: str, key: str, text: str):
+        """Tell one character something about the scene, now and whenever their
+        conversation (re)opens while the note stands: Maria is walking over to take the
+        order, so Luis should not end his next line on a question the learner will
+        never answer. An empty text withdraws the note."""
+        npc_id = self.pack.resolve(npc_id) if self.pack else npc_id
+        run = self._run_state(run_id)
+        if not text.strip():
+            run.notes.get(npc_id, {}).pop(key, None)
+            return
+        line = f"Scene note ({key}): {text.strip()}"
+        run.notes.setdefault(npc_id, {})[key] = line
+        for session in list(self.sessions.values()):
+            if session.run is run and session.npc_id == npc_id and session.ws is not None \
+                    and not session.lock.locked():
+                with suppress(Exception):
+                    await session.ws.send(json.dumps({"type": "contextual_update", "text": line}))
 
     async def end_session(self, session_id: UUID):
         session = self.sessions.get(session_id)

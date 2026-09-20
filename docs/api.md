@@ -184,6 +184,23 @@ session on that run whose character differs gets a `contextual_update` with what
 learner said and how the character answered, marked as not addressed to them. A session
 opened later does not get earlier turns; it starts from the run state (`{{user_order}}`).
 
+### Scene notes
+
+```sh
+curl -X POST http://127.0.0.1:8765/v1/runs/visit-1/notes -H 'Content-Type: application/json' \
+  -d '{"npc_id": "luis", "key": "floor", "text": "Maria is walking over to take the order."}'
+```
+
+Tells one character something about the scene without anyone taking a turn: who has just
+walked up, whose turn it is to speak. The game sends these from its NPC schedule (the
+`tell` list on a move in `npcs.json`) so Luis stops ending his lines on a question the
+moment Maria is on her way, and picks up again when she leaves. The note goes out at once
+as a `contextual_update` to that character's open session on the run, and is repeated
+when their conversation (re)opens while it stands. A later note with the same `key`
+replaces the earlier one; an empty `text` withdraws it. 204 on success, 422 for a bad
+`run_id` or body, 503/501 without a speech adapter that supports notes. The prompts
+tell both characters what to do with a "Scene note".
+
 Connections retain conversation memory per session UUID and are closed when the
 NPC/scenario changes, on error/cancellation, after 120 seconds idle, or on shutdown.
 Overlapping turns for one session are rejected with 422. Up to 64 sessions are

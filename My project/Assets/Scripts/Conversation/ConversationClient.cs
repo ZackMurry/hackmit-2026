@@ -254,6 +254,31 @@ public class ConversationClient : MonoBehaviour
             onDone?.Invoke(status);
     }
 
+    /// <summary>
+    /// Tell a character something about the scene without taking a turn
+    /// (<c>POST /v1/runs/{run_id}/notes</c>): who has just walked up, whose turn it is
+    /// to speak. Same <paramref name="key"/> replaces the earlier note; empty
+    /// <paramref name="text"/> withdraws it. Fire and forget.
+    /// </summary>
+    public IEnumerator Note(string npcId, string key, string text)
+    {
+        if (!IsOnline || string.IsNullOrEmpty(npcId))
+            yield break;
+        var body = new NoteBody { npc_id = npcId, key = string.IsNullOrEmpty(key) ? "floor" : key, text = text ?? "" };
+        using var req = new UnityWebRequest($"{Base}/v1/runs/{RunId}/notes", "POST")
+        {
+            uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes(JsonUtility.ToJson(body))) { contentType = "application/json" },
+            downloadHandler = new DownloadHandlerBuffer(),
+            timeout = 10,
+        };
+        yield return req.SendWebRequest();
+        if (req.result != UnityWebRequest.Result.Success)
+            Debug.LogWarning($"ConversationClient: scene note for {npcId} failed ({req.responseCode}): {req.downloadHandler.text}");
+    }
+
+    [Serializable]
+    class NoteBody { public string npc_id; public string key; public string text; }
+
     /// <summary>Close the server-side session (frees the provider connection). Fire and forget.</summary>
     public IEnumerator EndSession(string sessionId)
     {
