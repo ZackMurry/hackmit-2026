@@ -1,16 +1,22 @@
 using UnityEngine;
 
 /// <summary>
-/// Makes the NPC feel alive: the body turns to face the player when they are
-/// close, the head tracks the player's eyes within a cone, and the spine
-/// breathes. Bone rotations are applied in LateUpdate, i.e. layered on top of
-/// whatever <see cref="NpcIdleAnimation"/> posed this frame.
+/// Makes the NPC feel alive: while the player is engaging them (in talk range
+/// facing them, or mid-conversation) a standing body turns to face the player
+/// and the head tracks the player's eyes within a cone; otherwise the NPC minds
+/// its own business and the idle clip owns the pose. The spine always breathes.
+/// Bone rotations are applied in LateUpdate, i.e. layered on top of whatever
+/// <see cref="NpcIdleAnimation"/> posed this frame.
 /// </summary>
 [RequireComponent(typeof(NpcAvatarLoader))]
 public class NpcLookAt : MonoBehaviour
 {
+    [Header("Attention")]
+    [Tooltip("Seconds the NPC keeps looking at the player after the engagement ends.")]
+    public float attentionHold = 3f;
+
     [Header("Body")]
-    [Tooltip("Turn to face the player when they are within this distance.")]
+    [Tooltip("Turn to face the player (while engaged) when they are within this distance.")]
     public float turnRange = 5f;
     public float turnSpeed = 3f;
 
@@ -21,7 +27,7 @@ public class NpcLookAt : MonoBehaviour
     public float headMaxYaw = 60f;
     public float headMaxPitch = 30f;
     public float headSpeed = 6f;
-    [Tooltip("Beyond this distance the head stops tracking and the idle animation owns it.")]
+    [Tooltip("Beyond this distance the head never tracks, even mid-engagement.")]
     public float lookRange = 8f;
 
     [Header("Idle")]
@@ -33,6 +39,9 @@ public class NpcLookAt : MonoBehaviour
     NpcIdleAnimation idle;
     NpcWalker walker;
     NpcSitter sitter;
+    NpcInteractable interactable;
+    NpcConversation talk;
+    NpcSpeaker speaker;
     Transform player;
     Transform head;
     Transform spine;
@@ -40,6 +49,10 @@ public class NpcLookAt : MonoBehaviour
     Quaternion spineRest;
     Quaternion headCurrent;
     float lookWeight;
+    float attentionUntil = float.NegativeInfinity;
+
+    /// <summary>True while the player has this NPC's attention (or for attentionHold after).</summary>
+    public bool Attentive => Time.time < attentionUntil;
 
     void Awake()
     {
@@ -47,8 +60,18 @@ public class NpcLookAt : MonoBehaviour
         idle = GetComponent<NpcIdleAnimation>();
         walker = GetComponent<NpcWalker>();
         sitter = GetComponent<NpcSitter>();
+        interactable = GetComponent<NpcInteractable>();
+        talk = GetComponent<NpcConversation>();
+        speaker = GetComponent<NpcSpeaker>();
         loader.Loaded += OnAvatarLoaded;
     }
+
+    // Engaged = the player is in talk range looking at this NPC, or a turn with
+    // them is in flight (recording, waiting on the server, or the NPC speaking).
+    bool Engaged =>
+        (interactable != null && interactable.PlayerInRange)
+        || (talk != null && (talk.Busy || talk.IsRecording))
+        || (speaker != null && speaker.IsSpeaking);
 
     void Start()
     {
@@ -77,9 +100,13 @@ public class NpcLookAt : MonoBehaviour
 
     void Update()
     {
-        // While walking the walker owns the body heading, and a seated body stays
-        // put in its chair; the head still tracks in both cases.
-        if (player == null || (walker != null && walker.OwnsHeading) || (sitter != null && sitter.IsSeated))
+        if (Engaged)
+            attentionUntil = Time.time + attentionHold;
+
+        // Only an engaged, standing, non-walking NPC turns its body: the walker owns
+        // the heading while walking, and a seated body stays put in its chair.
+        if (player == null || !Attentive
+            || (walker != null && walker.OwnsHeading) || (sitter != null && sitter.IsSeated))
             return;
 
         Vector3 toPlayer = player.position - transform.position;
@@ -116,11 +143,14 @@ public class NpcLookAt : MonoBehaviour
         var look = transform.rotation * Quaternion.Euler(pitch, yaw, 0f);
         var target = look * headRestOffset;
 
-        // Fade tracking out when the player is far, letting the idle clip move the head.
-        float wantWeight = dir.magnitude <= lookRange ? 1f : 0f;
+        // Track only while the player has our attention (and is near enough); otherwise
+        // fade out and let the idle clip move the head.
+        float wantWeight = Attentive && dir.magnitude <= lookRange ? 1f : 0f;
         lookWeight = Mathf.MoveTowards(lookWeight, wantWeight, Time.deltaTime * 2f);
 
         headCurrent = Quaternion.Slerp(headCurrent, target, headSpeed * Time.deltaTime);
-        head.rotation = animated ? Quaternion.Slerp(head.rotation, headCurrent, lookWeight) : headCurrent;
+        // Blend from whatever owns the head otherwise: the clip's pose, or the rest pose.
+        var rest = animated ? head.rotation : transform.rotation * headRestOffset;
+        head.rotation = Quaternion.Slerp(rest, headCurrent, lookWeight);
     }
 }
