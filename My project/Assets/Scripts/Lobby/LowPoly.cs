@@ -165,23 +165,36 @@ public static class LowPoly
 
     /// <summary>
     /// A faceted Earth, radius 1: each face coloured by what the land/sea map says is
-    /// under it. Longitude 0 faces −z, matching <see cref="Wish"/>'s pin maths.
+    /// under it. Longitude 0 faces −z, matching <see cref="Wish"/>'s pin maths. Five
+    /// subdivisions is 20,480 faces, each under 100 km across, so coastal cities sit on
+    /// their coast rather than in the sea a face-width away.
     /// </summary>
-    public static Mesh Earth(Texture2D map, int subdivisions = 3)
+    public static Mesh Earth(Texture2D map, int subdivisions = 5)
     {
         var b = new Builder();
         var votes = new int[(int)Swatch.Count];
+        var samples = new Vector3[7];
         foreach (var (p, q, r) in Icosphere(subdivisions))
         {
             Array.Clear(votes, 0, votes.Length);
             var centre = (p + q + r) / 3f;
-            // Sample the centre and each corner pulled part-way in, and take the majority.
-            foreach (var s in new[] { centre, Vector3.Lerp(p, centre, 0.4f), Vector3.Lerp(q, centre, 0.4f), Vector3.Lerp(r, centre, 0.4f),
-                                      Vector3.Lerp(p, q, 0.5f), Vector3.Lerp(q, r, 0.5f), Vector3.Lerp(r, p, 0.5f) })
+            // Sample the centre, each corner pulled part-way in, and the edge midpoints.
+            samples[0] = centre;
+            samples[1] = Vector3.Lerp(p, centre, 0.4f); samples[2] = Vector3.Lerp(q, centre, 0.4f); samples[3] = Vector3.Lerp(r, centre, 0.4f);
+            samples[4] = Vector3.Lerp(p, q, 0.5f); samples[5] = Vector3.Lerp(q, r, 0.5f); samples[6] = Vector3.Lerp(r, p, 0.5f);
+            foreach (var s in samples)
                 votes[(int)Classify(map, s.normalized)]++;
-            int best = 0;
-            for (int i = 1; i < votes.Length; i++)
-                if (votes[i] > votes[best])
+            // A face is sea only if it's mostly sea: coasts lean land, so peninsulas and
+            // islands keep their shape instead of eroding a face at a time.
+            int land = samples.Length - votes[(int)Swatch.Ocean];
+            if (land < 3)
+            {
+                b.Tri(p, q, r, Swatch.Ocean);
+                continue;
+            }
+            int best = (int)Swatch.Sand;
+            for (int i = 0; i < votes.Length; i++)
+                if (i != (int)Swatch.Ocean && votes[i] > votes[best])
                     best = i;
             b.Tri(p, q, r, (Swatch)best);
         }
