@@ -1,16 +1,18 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// Clouds drawn over everything, that outlive the scene they were made in.
+/// The white-out that carries a trip across a scene load, and the clouds that part on
+/// the other side.
 ///
-/// Two drifting layers of wisps and a bank sitting along the bottom of the screen, all
-/// procedural (tileable fBm noise made once at start) and drawn with IMGUI so they sit
-/// on top of any camera. <see cref="Cover"/> runs from 0 — a few clouds about — to 1 —
-/// inside one, mostly white: the layers thicken and grow, the bank climbs, and a white
-/// wash comes up over the lot. The object is DontDestroyOnLoad, so the front can bring
-/// the cover to 1, load the destination behind it, and the clouds part onto the spawn
-/// (<see cref="Reveal"/>); or a scene can open through them (<see cref="Arrive"/>).
+/// The front does the flying: its own low-poly clouds stream past the camera as
+/// <see cref="Cover"/> rises, and the last stretch of cover brings up a flat white wash
+/// (IMGUI, on top of every camera) so the load hitch happens behind solid white. The
+/// object is DontDestroyOnLoad; once the destination has loaded, <see cref="Reveal"/>
+/// hangs a shell of low-poly clouds in front of whatever camera it finds, drops the
+/// wash, and the clouds fly apart onto the spawn. <see cref="Arrive"/> is the plain
+/// fade-in used when the front itself starts.
 /// </summary>
 public class CloudCurtain : MonoBehaviour
 {
@@ -28,57 +30,48 @@ public class CloudCurtain : MonoBehaviour
         return Current;
     }
 
-    /// <summary>Where the clouds are asked to be: 0 a few about, 1 inside one. Eased toward.</summary>
-    public float Cover { get => target; set => target = Mathf.Clamp01(value); }
+    /// <summary>How far into the clouds the front is, 0–1. The wash comes up over the last stretch.</summary>
+    public float Cover { get => cover; set => cover = Mathf.Clamp01(value); }
 
     enum Mode { Steady, Arriving, Revealing }
 
     Mode mode = Mode.Steady;
-    float target, cover;
-    float ambient = 1f;          // how present the idle clouds are; goes to 0 as the curtain parts for good
+    float cover, wash;
     float modeStart, modeSeconds;
     bool sceneLanded;
-    float drift;                 // the layers slide apart as the curtain parts
 
-    Texture2D wispA, wispB, bank;
-    float scrollA, scrollB, scrollBank;
-
-    void Awake()
-    {
-        // Small and bilinear: clouds are soft, and this runs once at start.
-        wispA = Tileable(256, 256, 4.0f, 1, false);
-        wispB = Tileable(256, 256, 3.0f, 2, false);
-        bank = Tileable(512, 128, 3.2f, 3, true);
-    }
+    // The clouds that part on arrival.
+    Material cloudMaterial;
+    readonly List<Mesh> cloudMeshes = new();
+    readonly List<(Transform t, Vector3 start, Vector3 dir, float scale)> shards = new();
 
     void OnDestroy()
     {
         if (Current == this)
             Current = null;
         SceneManager.sceneLoaded -= OnSceneLoaded;
-        foreach (var t in new[] { wispA, wispB, bank })
-            if (t != null)
-                Destroy(t);
+        if (cloudMaterial != null)
+            Destroy(cloudMaterial);
+        foreach (var m in cloudMeshes)
+            Destroy(m);
     }
 
-    /// <summary>Start inside a cloud and open onto the current scene, keeping the idle clouds.</summary>
+    /// <summary>Start white and fade onto the current scene.</summary>
     public void Arrive(float seconds)
     {
-        cover = 1f;
-        target = 0f;
-        ambient = 1f;
+        wash = 1f;
         mode = Mode.Arriving;
         modeStart = Time.unscaledTime;
         modeSeconds = seconds;
     }
 
     /// <summary>
-    /// Hold white through the coming scene load, then part over <paramref name="seconds"/>
-    /// onto whatever loaded, and go away.
+    /// Hold white through the coming scene load, then part a shell of clouds over
+    /// <paramref name="seconds"/> onto whatever loaded, and go away.
     /// </summary>
     public void Reveal(float seconds)
     {
-        cover = target = 1f;
+        cover = wash = 1f;
         mode = Mode.Revealing;
         modeSeconds = seconds;
         sceneLanded = false;
@@ -89,13 +82,8 @@ public class CloudCurtain : MonoBehaviour
     void OnSceneLoaded(Scene scene, LoadSceneMode loadMode)
     {
         SceneManager.sceneLoaded -= OnSceneLoaded;
-        Land();
-    }
-
-    void Land()
-    {
         sceneLanded = true;
-        modeStart = Time.unscaledTime + 0.4f; // a beat of white while the new scene settles
+        modeStart = Time.unscaledTime + 0.3f; // a beat of white while the new scene settles
     }
 
     void Update()
@@ -104,12 +92,15 @@ public class CloudCurtain : MonoBehaviour
         switch (mode)
         {
             case Mode.Steady:
-                cover = Mathf.Lerp(cover, target, 1f - Mathf.Exp(-dt / 0.35f));
+            {
+                float want = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.72f, 1f, cover));
+                wash = Mathf.MoveTowards(wash, want, dt * 2.5f);
                 break;
+            }
             case Mode.Arriving:
             {
                 float p = Mathf.Clamp01((Time.unscaledTime - modeStart) / modeSeconds);
-                cover = 1f - Mathf.SmoothStep(0f, 1f, p);
+                wash = 1f - Mathf.SmoothStep(0f, 1f, p);
                 if (p >= 1f)
                     mode = Mode.Steady;
                 break;
@@ -119,144 +110,83 @@ public class CloudCurtain : MonoBehaviour
                 if (!sceneLanded)
                 {
                     if (Time.unscaledTime - modeStart > 4f)
-                        Land();            // the load never told us; don't stay white forever
-                    cover = 1f;
+                        OnSceneLoaded(default, default);   // the load never told us; don't stay white forever
+                    wash = 1f;
                     break;
                 }
+                if (shards.Count == 0)
+                {
+                    var cam = Camera.main ?? (Camera.allCamerasCount > 0 ? Camera.allCameras[0] : null);
+                    if (cam == null) { wash = 1f; break; }   // the scene hasn't a camera yet
+                    Shell(cam);
+                    modeStart = Time.unscaledTime;
+                }
                 float p = Mathf.Clamp01((Time.unscaledTime - modeStart) / modeSeconds);
-                float e = Mathf.SmoothStep(0f, 1f, p);
-                cover = 1f - e;
-                ambient = 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.45f, 1f, p));
-                drift += dt * e * 0.35f;
+                wash = 1f - Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0f, 0.22f, p));   // white gives way to the clouds
+                float e = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.18f, 1f, p));    // which then fly apart
+                foreach (var (t, start, dir, scale) in shards)
+                {
+                    if (t == null) continue;
+                    t.localPosition = start + dir * (e * 8f);
+                    t.localScale = Vector3.one * (scale * (1f - 0.7f * e));
+                }
                 if (p >= 1f)
                     Destroy(gameObject);
                 break;
             }
         }
-        float rush = 1f + 3f * cover;     // the clouds stream past faster the deeper in you are
-        scrollA += dt * 0.020f * rush;
-        scrollB -= dt * 0.014f * rush;
-        scrollBank += dt * 0.010f * rush;
     }
 
-    // ---- drawing --------------------------------------------------------------------
+    /// <summary>Hang clouds across the camera's view, close, in two layers, with no gaps.</summary>
+    void Shell(Camera cam)
+    {
+        if (cloudMaterial == null)
+        {
+            cloudMaterial = LowPoly.PaletteMaterial(false);
+            for (int i = 0; i < 5; i++)
+                cloudMeshes.Add(LowPoly.Cloud(700 + i));
+        }
+        var rng = new System.Random(3);
+        float R(float lo, float hi) => lo + (float)rng.NextDouble() * (hi - lo);
+        void Layer(float depth, int cols, int rows, float size, float jitter)
+        {
+            float hh = depth * Mathf.Tan(cam.fieldOfView * 0.5f * Mathf.Deg2Rad) * 1.15f;
+            float hw = hh * cam.aspect;
+            for (int r = 0; r < rows; r++)
+                for (int c = 0; c < cols; c++)
+                {
+                    var local = new Vector3(
+                        Mathf.Lerp(-hw, hw, (c + 0.5f) / cols) + R(-jitter, jitter),
+                        Mathf.Lerp(-hh, hh, (r + 0.5f) / rows) + R(-jitter, jitter),
+                        depth + R(-0.2f, 0.2f));
+                    var go = new GameObject("Cloud");
+                    go.transform.SetParent(cam.transform, false);
+                    go.transform.localPosition = local;
+                    go.transform.localRotation = Quaternion.Euler(0f, R(-30f, 30f), 0f);
+                    float s = size * R(0.9f, 1.25f);
+                    go.transform.localScale = Vector3.one * s;
+                    go.AddComponent<MeshFilter>().sharedMesh = cloudMeshes[rng.Next(cloudMeshes.Count)];
+                    var mr = go.AddComponent<MeshRenderer>();
+                    mr.sharedMaterial = cloudMaterial;
+                    mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    mr.receiveShadows = false;
+                    // Fly outward from the middle of the view and a little back past the camera.
+                    var dir = new Vector3(local.x, local.y, -0.6f * depth).normalized;
+                    shards.Add((go.transform, local, dir, s));
+                }
+        }
+        Layer(4.5f, 4, 3, 2.2f, 0.5f);
+        Layer(2.6f, 4, 3, 1.5f, 0.3f);
+    }
 
     void OnGUI()
     {
-        if (Event.current.type != EventType.Repaint)
+        if (Event.current.type != EventType.Repaint || wash <= 0f)
             return;
         GUI.depth = -100;                 // over every scene's own UI
         var prev = GUI.color;
-        float w = Screen.width, h = Screen.height, c = cover, a = ambient;
-        int passes = 1 + Mathf.RoundToInt(c * 2.5f);
-
-        // Wisps: two layers at different scales and speeds; nearer and denser as cover rises,
-        // and sliding apart from each other as the curtain parts.
-        Layer(wispA, new Rect(0f, 0f, w, h), Mathf.Lerp(1.6f, 0.9f, c), new Vector2(scrollA - drift, 0.13f),
-              Mathf.Lerp(0.55f * a, 1f, c), passes);
-        Layer(wispB, new Rect(0f, 0f, w, h), Mathf.Lerp(1.1f, 0.6f, c), new Vector2(scrollB + drift, 0.61f),
-              Mathf.Lerp(0.50f * a, 1f, c), passes);
-
-        // The bank along the bottom, climbing to swallow the screen.
-        float bankH = h * Mathf.Lerp(0.5f, 1.7f, c);
-        var bankRect = new Rect(0f, h - bankH, w, bankH);
-        float bankTiles = (w / bankH) / 4f; // the texture is 4:1
-        GUI.color = new Color(1f, 1f, 1f, Mathf.Lerp(a, 1f, c));
-        GUI.DrawTextureWithTexCoords(bankRect, bank, new Rect(scrollBank, 0f, bankTiles, 1f));
-
-        // The white wash.
-        float wash = Mathf.Pow(Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.4f, 1f, c)), 1.1f) * 0.94f;
-        if (wash > 0f)
-        {
-            GUI.color = new Color(1f, 1f, 1f, wash);
-            GUI.DrawTexture(new Rect(0f, 0f, w, h), Texture2D.whiteTexture);
-        }
+        GUI.color = new Color(1f, 1f, 1f, wash);
+        GUI.DrawTexture(new Rect(0f, 0f, Screen.width, Screen.height), Texture2D.whiteTexture);
         GUI.color = prev;
-    }
-
-    /// <summary>Tile a cloud texture across <paramref name="rect"/>, <paramref name="tiles"/> across, drawn <paramref name="passes"/> times to thicken.</summary>
-    static void Layer(Texture2D tex, Rect rect, float tiles, Vector2 offset, float alpha, int passes)
-    {
-        if (alpha <= 0f)
-            return;
-        GUI.color = new Color(1f, 1f, 1f, alpha);
-        var coords = new Rect(offset.x, offset.y, tiles, tiles * rect.height / rect.width);
-        for (int i = 0; i < passes; i++)
-            GUI.DrawTextureWithTexCoords(rect, tex, coords);
-    }
-
-    // ---- the noise ------------------------------------------------------------------
-
-    /// <summary>
-    /// White with cloud-shaped alpha, wrapping seamlessly across (and, unless it is the
-    /// bank, down). The bank is opaque along its bottom edge and breaks into puffs above.
-    /// </summary>
-    static Texture2D Tileable(int w, int h, float scale, int seed, bool isBank)
-    {
-        var raw = new float[w * h];
-        float ox = seed * 101.7f, oy = seed * 37.3f;
-        double sum = 0, sumSq = 0;
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-            {
-                float u = x / (float)w, v = y / (float)h;
-                // Blend copies offset by one tile so the edges meet.
-                float n = isBank
-                    ? Fbm(u, v, ox, oy, scale) * (1f - u) + Fbm(u - 1f, v, ox, oy, scale) * u
-                    : Fbm(u, v, ox, oy, scale) * (1f - u) * (1f - v) + Fbm(u - 1f, v, ox, oy, scale) * u * (1f - v)
-                    + Fbm(u, v - 1f, ox, oy, scale) * (1f - u) * v + Fbm(u - 1f, v - 1f, ox, oy, scale) * u * v;
-                raw[y * w + x] = n;
-                sum += n;
-                sumSq += n * n;
-            }
-        // Normalise so the thresholds below mean the same whatever the noise's spread.
-        float mean = (float)(sum / raw.Length);
-        float sd = Mathf.Max(1e-4f, (float)System.Math.Sqrt(sumSq / raw.Length - mean * mean));
-
-        var tex = new Texture2D(w, h, TextureFormat.RGBA32, false)
-        {
-            wrapMode = TextureWrapMode.Repeat,
-            filterMode = FilterMode.Bilinear,
-            hideFlags = HideFlags.HideAndDontSave,
-        };
-        if (isBank)
-            tex.wrapModeV = TextureWrapMode.Clamp;
-        var px = new Color32[w * h];
-        for (int y = 0; y < h; y++)
-            for (int x = 0; x < w; x++)
-            {
-                float n = 0.5f + (raw[y * w + x] - mean) / sd * 0.18f;
-                float d;
-                if (isBank)
-                {
-                    float bottom = 1f - y / (float)h;            // row 0 is the bottom of a Unity texture
-                    d = Smooth(0.42f, 0.70f, n + bottom * 0.55f - 0.22f);
-                }
-                else
-                    d = Smooth(0.53f, 0.79f, n);
-                px[y * w + x] = new Color32(255, 255, 255, (byte)Mathf.RoundToInt(d * 255f));
-            }
-        tex.SetPixels32(px);
-        tex.Apply(false, true);
-        return tex;
-    }
-
-    static float Fbm(float u, float v, float ox, float oy, float scale)
-    {
-        float s = 0f, amp = 1f, total = 0f, f = 1f;
-        for (int o = 0; o < 5; o++)
-        {
-            s += amp * Mathf.PerlinNoise(ox + u * scale * f + 13.1f * o, oy + v * scale * f + 7.7f * o);
-            total += amp;
-            amp *= 0.5f;
-            f *= 2f;
-        }
-        return s / total;
-    }
-
-    static float Smooth(float a, float b, float x)
-    {
-        float t = Mathf.Clamp01((x - a) / (b - a));
-        return t * t * (3f - 2f * t);
     }
 }

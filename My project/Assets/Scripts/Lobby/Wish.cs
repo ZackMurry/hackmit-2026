@@ -8,23 +8,24 @@ using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// The front of Scenar.io: one sentence with two blanks, and the Earth in the clouds.
+/// The front of Scenar.io: one sentence with two blanks, and a low-poly Earth in the clouds.
 ///
 ///     Put me in ______________________.
-///     I speak it [a little].
 ///
 /// You finish the sentence; that is the whole configuration. Name a place and a pin
 /// lands on the globe and it turns to face you. Enter: the globe swings the pin round
-/// and rushes up to it while the clouds close in, until the screen is nearly white and
-/// a few words say what is being done (scouting, building, casting the voices, writing
-/// the goals). The destination loads behind the white, and the clouds part onto the
-/// spawn (<see cref="CloudCurtain"/>).
+/// and rushes up to it while you fly forward into the clouds — they stream past, close
+/// in, and fill the screen white — and a few words say what is being done (scouting,
+/// building, casting the voices, writing the goals). The destination loads behind the
+/// white, and the clouds part onto the spawn (<see cref="CloudCurtain"/>).
 ///
 /// Every sentence lands in <see cref="destinationScene"/> for now; Café Nader is the
-/// worked example of a generated trip. The sentence and level are kept in PlayerPrefs
-/// (<see cref="LastLine"/>, <see cref="LastLevel"/>) for when generation is wired to
-/// <c>POST /v1/scenarios</c>. The sky is a Poly Haven HDRI and the Earth a NASA Blue
-/// Marble, both under <c>Resources/Wish</c>; the type is IMGUI.
+/// worked example of a generated trip. The sentence is kept in PlayerPrefs
+/// (<see cref="LastLine"/>) for when generation is wired to
+/// <c>POST /v1/scenarios</c>. Everything in the scene is flat-shaded geometry built at
+/// start (<see cref="LowPoly"/>): a gradient dome, a faceted Earth coloured from NASA's
+/// land/sea map under <c>Resources/Wish</c>, and clouds of squashed icospheres. The type
+/// is IMGUI.
 /// </summary>
 public class Wish : MonoBehaviour
 {
@@ -35,23 +36,13 @@ public class Wish : MonoBehaviour
     [Header("The sentence")]
     [Tooltip("Shown faintly in the empty blank; used as the answer if the learner goes without typing.")]
     public string example = "a café in Cancún, ordering breakfast";
-    public Level[] levels =
-    {
-        new() { word = "barely", cefr = "A1" },
-        new() { word = "a little", cefr = "A2" },
-        new() { word = "comfortably", cefr = "B1" },
-        new() { word = "well", cefr = "B2" },
-    };
-    public int defaultLevel = 1;
 
     [Header("Look")]
     [Tooltip("Type colour; dark, since the sky is bright.")]
     public Color ink = new(0.09f, 0.10f, 0.13f);
-    [Tooltip("Blank underline, level word, pin.")]
-    public Color accent = new(1f, 0.49f, 0.25f);
-    [Tooltip("Heading of the sky panorama, degrees.")]
-    public float skyRotation = 0f;
-    public float skyExposure = 1.15f;
+    public Color skyZenith = new(0.36f, 0.58f, 0.86f);
+    public Color skyHorizon = new(0.84f, 0.90f, 0.97f);
+    public Color skyBelow = new(0.70f, 0.80f, 0.92f);
     public Vector3 globeCentre = new(2.0f, -0.15f, 0f);
     public float globeRadius = 1.7f;
     [Tooltip("Degrees per second the globe idles at before a place is named.")]
@@ -65,20 +56,10 @@ public class Wish : MonoBehaviour
     [Tooltip("Seconds the clouds take to part onto the destination's spawn.")]
     public float revealSeconds = 3.2f;
 
-    [Serializable]
-    public class Level
-    {
-        public string word;
-        [Tooltip("CEFR level sent with the scenario request.")]
-        public string cefr;
-    }
-
     /// <summary>What the learner last went with; empty until they have.</summary>
     public static string LastLine => PlayerPrefs.GetString(LinePref, "");
-    public static string LastLevel => PlayerPrefs.GetString(LevelPref, "");
 
     const string LinePref = "wish.line";
-    const string LevelPref = "wish.level";
 
     // Places the globe knows. Anything else gets a pin from a hash of the line; the
     // demo's café is the first one.
@@ -118,7 +99,6 @@ public class Wish : MonoBehaviour
     Phase phase = Phase.Writing;
     float phaseStart;
     string line = "";
-    int level;
     bool loading;
 
     // The globe.
@@ -129,32 +109,43 @@ public class Wish : MonoBehaviour
     string placeName = "";
     float pinLat, pinLon;
 
-    Material skyMaterial, earthMaterial, pinMaterial;
+    Material skyMaterial, litMaterial, cloudMaterial;
+    readonly List<Mesh> meshes = new();
     Light sun;
+
+    // The clouds: a sea of them below, a few adrift above; on Enter they all stream past.
+    readonly List<Puff> puffs = new();
+    System.Random cloudRng = new(11);
+
+    class Puff
+    {
+        public Transform t;
+        public bool sea;      // part of the bank below, or one of the floaters
+        public float drift;   // idle speed along x
+        public float size;
+    }
     Camera cam;
     CloudCurtain curtain;
 
     // Type, laid out on a 1280×720 canvas and scaled to the window.
     const float DesignW = 1280f, DesignH = 720f;
     Font sans;
-    GUIStyle wordmark, tagline, sentence, blank, placeholder, hint, tiny, status, statusSub, pinLabel;
+    GUIStyle wordmark, tagline, sentence, blank, placeholder, hint, status, statusSub, pinLabel;
 
     string Line => string.IsNullOrWhiteSpace(line) ? example : line.Trim();
-    string Cefr => levels.Length > 0 ? levels[Mathf.Clamp(level, 0, levels.Length - 1)].cefr : "";
-    string LevelWord => levels.Length > 0 ? levels[Mathf.Clamp(level, 0, levels.Length - 1)].word : "";
     float Since => Time.time - phaseStart;
     /// <summary>Progress through the trip, 0–1; 0 while writing.</summary>
     float Trip => phase == Phase.Writing ? 0f : phase == Phase.Departing ? 1f : Mathf.Clamp01(Since / tripSeconds);
 
     void Start()
     {
-        level = Mathf.Clamp(defaultLevel, 0, Mathf.Max(0, levels.Length - 1));
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
         cam = Camera.main;
 
         Sky();
         BuildGlobe();
+        BuildClouds();
         yaw = yawTarget = 40f;
 
         curtain = CloudCurtain.Get();
@@ -163,7 +154,10 @@ public class Wish : MonoBehaviour
 
     void OnDestroy()
     {
-        foreach (var m in new[] { skyMaterial, earthMaterial, pinMaterial })
+        foreach (var m in new[] { skyMaterial, litMaterial, cloudMaterial })
+            if (m != null)
+                Destroy(m);
+        foreach (var m in meshes)
             if (m != null)
                 Destroy(m);
     }
@@ -198,8 +192,10 @@ public class Wish : MonoBehaviour
             pin.localScale = Vector3.one * (0.075f + 0.02f * Mathf.Sin(Time.time * 4f));
 
         // The clouds close in as the trip goes on (and open again if you change your mind).
+        float cover = phase == Phase.Writing ? 0f : Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(CoverFrom, CoverTo, t));
+        MoveClouds(cover);
         if (curtain != null && phase != Phase.Departing)
-            curtain.Cover = phase == Phase.Writing ? 0f : Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(CoverFrom, CoverTo, t));
+            curtain.Cover = cover;
     }
 
     void Go()
@@ -212,9 +208,8 @@ public class Wish : MonoBehaviour
         phaseStart = Time.time;
         GUI.FocusControl(null);
         PlayerPrefs.SetString(LinePref, Line);
-        PlayerPrefs.SetString(LevelPref, Cefr);
         PlayerPrefs.Save();
-        Debug.Log($"Wish: «{Line}», speaks it {LevelWord} ({Cefr})");
+        Debug.Log($"Wish: «{Line}»");
     }
 
     void ChangeMind()
@@ -245,39 +240,33 @@ public class Wish : MonoBehaviour
         SceneManager.LoadScene(destinationScene);
     }
 
-    // ---- the sky and the globe ------------------------------------------------------
+    // ---- the sky, the globe and the clouds ------------------------------------------
 
     void Sky()
     {
-        var panorama = Resources.Load<Texture2D>("Wish/sky");
-        var shader = Shader.Find("Skybox/Panoramic");
-        if (panorama != null && shader != null)
+        if (cam != null)
         {
-            skyMaterial = new Material(shader);
-            skyMaterial.SetTexture("_MainTex", panorama);
-            skyMaterial.SetFloat("_Mapping", 1f);       // latitude/longitude layout
-            skyMaterial.EnableKeyword("_MAPPING_LATITUDE_LONGITUDE_LAYOUT");
-            skyMaterial.DisableKeyword("_MAPPING_6_FRAMES_LAYOUT");
-            skyMaterial.SetFloat("_ImageType", 0f);     // 360°
-            skyMaterial.SetFloat("_Rotation", skyRotation);
-            skyMaterial.SetFloat("_Exposure", skyExposure);
-            RenderSettings.skybox = skyMaterial;
-            if (cam != null)
-                cam.clearFlags = CameraClearFlags.Skybox;
+            cam.clearFlags = CameraClearFlags.SolidColor;
+            cam.backgroundColor = skyHorizon;
         }
-        else
-            Debug.LogWarning("Wish: no sky (Resources/Wish/sky or the Skybox/Panoramic shader is missing)");
+        // A dome around the camera with a vertical gradient: pale at the horizon, blue above.
+        var dome = new GameObject("Sky");
+        dome.transform.SetParent(transform, false);
+        dome.transform.position = cam != null ? cam.transform.position : Vector3.zero;
+        dome.transform.localScale = Vector3.one * 60f;
+        skyMaterial = LowPoly.GradientMaterial(skyBelow, skyHorizon, skyZenith);
+        Piece(dome, LowPoly.Dome(), skyMaterial);
 
-        // Daylight from up and to the right, and a soft blue fill so the night side isn't black.
+        // Daylight from up and to the right, and a soft blue fill so the night side stays pastel.
         RenderSettings.ambientMode = AmbientMode.Flat;
-        RenderSettings.ambientLight = new Color(0.60f, 0.66f, 0.78f);
+        RenderSettings.ambientLight = new Color(0.55f, 0.62f, 0.76f);
         sun = new GameObject("Sun").AddComponent<Light>();
         sun.transform.SetParent(transform, false);
         sun.type = LightType.Directional;
         sun.color = new Color(1f, 0.97f, 0.92f);
-        sun.intensity = 1.5f;
+        sun.intensity = 1.4f;
         sun.shadows = LightShadows.None;
-        sun.transform.rotation = Quaternion.Euler(28f, -38f, 0f);
+        sun.transform.rotation = Quaternion.Euler(30f, -40f, 0f);
     }
 
     void BuildGlobe()
@@ -286,67 +275,104 @@ public class Wish : MonoBehaviour
         globe.SetParent(transform, false);
         globe.position = globeCentre;
 
+        litMaterial = LowPoly.PaletteMaterial(true);
+        cloudMaterial = LowPoly.PaletteMaterial(false);
+
+        var map = Resources.Load<Texture2D>("Wish/earth_map");
+        if (map == null)
+            Debug.LogWarning("Wish: no land/sea map at Resources/Wish/earth_map; the Earth will be all ocean");
         var earth = new GameObject("Earth");
         earth.transform.SetParent(globe, false);
         earth.transform.localScale = Vector3.one * globeRadius;
-        earth.AddComponent<MeshFilter>().sharedMesh = SphereMesh(96, 48);
-        var renderer = earth.AddComponent<MeshRenderer>();
-        renderer.shadowCastingMode = ShadowCastingMode.Off;
-        renderer.receiveShadows = false;
-        earthMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
-        var map = Resources.Load<Texture2D>("Wish/earth");
-        if (map != null)
-        {
-            earthMaterial.SetTexture("_BaseMap", map);
-            earthMaterial.SetTexture("_MainTex", map);   // in case the fallback shader is what we got
-        }
-        else
-            Debug.LogWarning("Wish: no Earth texture at Resources/Wish/earth");
-        earthMaterial.SetFloat("_Smoothness", 0.3f);
-        earthMaterial.SetFloat("_Metallic", 0f);
-        renderer.sharedMaterial = earthMaterial;
-
-        pinMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color"));
-        pinMaterial.SetColor("_BaseColor", accent);
-        pinMaterial.SetColor("_Color", accent);
+        Piece(earth, LowPoly.Earth(map), litMaterial);
     }
 
-    /// <summary>
-    /// A UV sphere whose longitude 0 faces the camera and whose texture reads the right
-    /// way round from outside: u runs with longitude (−180…180 → 0…1), v with latitude.
-    /// </summary>
-    static Mesh SphereMesh(int segments, int rings)
+    void BuildClouds()
     {
-        var verts = new Vector3[(rings + 1) * (segments + 1)];
-        var uv = new Vector2[verts.Length];
-        for (int i = 0; i <= rings; i++)
+        for (int i = 0; i < 5; i++)
+            meshes.Add(LowPoly.Cloud(100 + i));
+        for (int i = 0; i < 34; i++)
+            Spawn(true, true);
+        for (int i = 0; i < 9; i++)
+            Spawn(false, true);
+    }
+
+    float R(float lo, float hi) => lo + (float)cloudRng.NextDouble() * (hi - lo);
+
+    /// <summary>A cloud in the sea below or adrift above; <paramref name="anywhere"/> for the initial scatter, else far ahead.</summary>
+    Puff Spawn(bool sea, bool anywhere)
+    {
+        var go = new GameObject("Cloud");
+        go.transform.SetParent(transform, false);
+        go.transform.rotation = Quaternion.Euler(0f, R(-40f, 40f), 0f);
+        var puff = new Puff { t = go.transform, sea = sea, drift = R(0.10f, 0.22f), size = sea ? R(0.9f, 1.7f) : R(0.45f, 1.0f) };
+        go.transform.localScale = Vector3.one * puff.size;
+        var mr = Piece(go, meshes[cloudRng.Next(meshes.Count)], cloudMaterial);
+        mr.shadowCastingMode = ShadowCastingMode.Off;
+        Reset(puff, anywhere);
+        puffs.Add(puff);
+        return puff;
+    }
+
+    void Reset(Puff p, bool anywhere)
+    {
+        float z = anywhere ? R(-3f, 15f) : R(14f, 19f);
+        p.t.position = p.sea
+            ? new Vector3(R(-10f, 10f), R(-2.7f, -1.8f), z)
+            : new Vector3(R(-10f, 10f), R(0.4f, 3.4f), z);
+    }
+
+    /// <summary>Idle: everything drifts. Boarding: everything streams past, converging on the camera.</summary>
+    void MoveClouds(float cover)
+    {
+        float dt = Time.deltaTime;
+        float camZ = cam != null ? cam.transform.position.z : -5f;
+        float rush = cover * cover * 11f;                       // forward speed
+        // The whole sea climbs to meet you; move it by the change so each cloud keeps its own row.
+        float lift = Mathf.SmoothStep(0f, 1f, cover) * 2.4f;
+        float dLift = lift - seaLift;
+        seaLift = lift;
+        foreach (var p in puffs)
         {
-            float lat = -90f + 180f * i / rings;
-            for (int j = 0; j <= segments; j++)
+            var pos = p.t.position;
+            pos.x += p.drift * dt;
+            pos.z -= rush * dt;
+            if (p.sea)
+                pos.y += dLift;
+            if (pos.x > 11f)
+                pos.x -= 22f;
+            if (pos.z < camZ - 2.5f)
             {
-                float lon = -180f + 360f * j / segments;
-                int k = i * (segments + 1) + j;
-                verts[k] = PinLocal(lat, lon);
-                uv[k] = new Vector2(j / (float)segments, i / (float)rings);
+                // Gone past: come round again far ahead, gathering round the flight path the deeper in you are.
+                Reset(p, false);
+                pos = p.t.position;
+                pos.x = Mathf.Lerp(pos.x, R(-2.5f, 2.5f), cover);
+                pos.y = p.sea ? pos.y + seaLift : Mathf.Lerp(pos.y, R(-1.5f, 1.8f), cover);
             }
+            p.t.position = pos;
         }
-        var tris = new int[rings * segments * 6];
-        int n = 0;
-        for (int i = 0; i < rings; i++)
-            for (int j = 0; j < segments; j++)
-            {
-                int a = i * (segments + 1) + j, b = a + 1, c = a + segments + 1, d = c + 1;
-                // Clockwise seen from outside: Unity's front face.
-                tris[n++] = a; tris[n++] = c; tris[n++] = d;
-                tris[n++] = a; tris[n++] = d; tris[n++] = b;
-            }
-        var mesh = new Mesh { name = "Earth" };
-        mesh.SetVertices(verts);
-        mesh.SetNormals(verts);   // unit sphere: the position is the normal
-        mesh.SetUVs(0, uv);
-        mesh.SetTriangles(tris, 0);
-        mesh.RecalculateBounds();
-        return mesh;
+        // More clouds the deeper in you are, so the view fills before the wash.
+        int want = 43 + Mathf.RoundToInt(Mathf.InverseLerp(0.3f, 0.9f, cover) * 22f);
+        while (puffs.Count < want)
+        {
+            var extra = Spawn(cloudRng.NextDouble() < 0.5, false);
+            extra.t.position = new Vector3(R(-3f, 3f), R(-1.5f, 2f), extra.t.position.z);
+        }
+    }
+
+    float seaLift;
+
+    /// <summary>Give a GameObject a mesh and a material; remembers the mesh for cleanup.</summary>
+    MeshRenderer Piece(GameObject go, Mesh mesh, Material material)
+    {
+        if (!meshes.Contains(mesh))
+            meshes.Add(mesh);
+        go.AddComponent<MeshFilter>().sharedMesh = mesh;
+        var mr = go.AddComponent<MeshRenderer>();
+        mr.sharedMaterial = material;
+        mr.shadowCastingMode = ShadowCastingMode.Off;
+        mr.receiveShadows = false;
+        return mr;
     }
 
     /// <summary>Unit vector for a latitude/longitude; longitude 0 faces the camera.</summary>
@@ -390,10 +416,8 @@ public class Wish : MonoBehaviour
         pinLon = lon;
         placeName = name;
         hasPin = true;
-        var marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-        marker.name = "Pin";
-        Destroy(marker.GetComponent<Collider>());
-        marker.GetComponent<MeshRenderer>().sharedMaterial = pinMaterial;
+        var marker = new GameObject("Pin");
+        Piece(marker, LowPoly.Ball(LowPoly.Swatch.Ink), cloudMaterial);
         pin = marker.transform;
         pin.SetParent(globe, false);
         pin.localPosition = PinLocal(lat, lon) * (globeRadius * 1.005f);
@@ -441,8 +465,6 @@ public class Wish : MonoBehaviour
         if (phase == Phase.Writing)
         {
             if (enter) { Go(); e.Use(); }
-            else if (e.keyCode == KeyCode.UpArrow) { level = (level + levels.Length - 1) % levels.Length; e.Use(); }
-            else if (e.keyCode == KeyCode.DownArrow) { level = (level + 1) % levels.Length; e.Use(); }
         }
         else if (phase == Phase.Boarding && e.keyCode == KeyCode.Escape)
         {
@@ -453,18 +475,8 @@ public class Wish : MonoBehaviour
 
     void Wordmark(float w)
     {
-        var a = new GUIContent("Scenar");
-        var b = new GUIContent(".io");
-        float aw = wordmark.CalcSize(a).x, bw = wordmark.CalcSize(b).x;
-        var row = new Rect((w - aw - bw) / 2f, 54f, aw, 84f);
-        wordmark.normal.textColor = ink;
-        GUI.Label(row, a, wordmark);
-        row.x += aw;
-        row.width = bw;
-        wordmark.normal.textColor = accent;
-        GUI.Label(row, b, wordmark);
-        tagline.normal.textColor = new Color(ink.r, ink.g, ink.b, 0.6f);
-        GUI.Label(new Rect(0f, 138f, w, 24f), "A world for whatever you need to say.", tagline);
+        Text(new Rect(0f, 54f, w, 84f), "Scenar.io", wordmark, ink, TextAnchor.MiddleCenter);
+        Text(new Rect(0f, 138f, w, 24f), "Learn languages like a local.", tagline, new Color(ink.r, ink.g, ink.b, 0.6f), TextAnchor.MiddleCenter);
     }
 
     void Sentence(float alpha)
@@ -475,12 +487,11 @@ public class Wish : MonoBehaviour
         float y = 262f;
         var dark = new Color(ink.r, ink.g, ink.b, alpha);
         var faint = new Color(ink.r, ink.g, ink.b, 0.42f * alpha);
-        var orange = new Color(accent.r, accent.g, accent.b, alpha);
 
         Text(new Rect(x, y, width, 46f), "Put me in", sentence, dark);
         y += 60f;
 
-        // The blank: typed straight onto the sky, underlined in the accent.
+        // The blank: typed straight onto the sky, with a rule under it.
         var blankRect = new Rect(x, y, width, 46f);
         if (phase == Phase.Writing)
         {
@@ -496,28 +507,11 @@ public class Wish : MonoBehaviour
         }
         else
             Text(blankRect, Line, blank, dark);
-        GUI.color = orange;
+        GUI.color = dark;
         GUI.DrawTexture(new Rect(x, y + 50f, width, 2f), Texture2D.whiteTexture);
         GUI.color = Color.white;
+
         y += 82f;
-
-        // The level: one word in the accent; click or ↑/↓ to change it.
-        string lead = "I speak it ";
-        float leadW = sentence.CalcSize(new GUIContent(lead)).x;
-        float wordW = sentence.CalcSize(new GUIContent(LevelWord)).x;
-        Text(new Rect(x, y, leadW + 4f, 46f), lead, sentence, dark);
-        var wordRect = new Rect(x + leadW, y, wordW, 46f);
-        Text(wordRect, LevelWord, sentence, orange);
-        Text(new Rect(wordRect.xMax, y, 40f, 46f), ".", sentence, dark);
-        GUI.color = orange;
-        for (float d = 0f; d < wordW; d += 8f)
-            GUI.DrawTexture(new Rect(wordRect.x + d, y + 50f, 4f, 2f), Texture2D.whiteTexture);
-        GUI.color = Color.white;
-        if (phase == Phase.Writing && GUI.Button(wordRect, GUIContent.none, GUIStyle.none))
-            level = (level + 1) % levels.Length;
-        Text(new Rect(wordRect.x, y + 56f, 200f, 16f), "click, or ↑ ↓", tiny, faint);
-
-        y += 110f;
         Text(new Rect(x, y, width, 24f), "Enter to go.", hint, faint);
     }
 
@@ -556,9 +550,16 @@ public class Wish : MonoBehaviour
 
     static void Text(Rect r, string s, GUIStyle style, Color color, TextAnchor anchor = TextAnchor.MiddleLeft)
     {
-        style.normal.textColor = color;
+        Ink(style, color);
         style.alignment = anchor;
         GUI.Label(r, s, style);
+    }
+
+    /// <summary>One colour in every state: the default skin turns type white on hover.</summary>
+    static void Ink(GUIStyle style, Color color)
+    {
+        foreach (var state in new[] { style.normal, style.hover, style.active, style.focused, style.onNormal, style.onHover, style.onActive, style.onFocused })
+            state.textColor = color;
     }
 
     void EnsureStyles()
@@ -567,29 +568,32 @@ public class Wish : MonoBehaviour
             return;
         sans = PickFont(16);
 
-        GUIStyle Plain(int size, FontStyle weight = FontStyle.Normal) =>
-            new(GUI.skin.label) { font = sans, fontSize = size, fontStyle = weight, richText = false, wordWrap = false, padding = new RectOffset(0, 0, 0, 0) };
+        GUIStyle Plain(int size, FontStyle weight = FontStyle.Normal)
+        {
+            var s = new GUIStyle(GUI.skin.label) { font = sans, fontSize = size, fontStyle = weight, richText = false, wordWrap = false, padding = new RectOffset(0, 0, 0, 0) };
+            Ink(s, ink);
+            return s;
+        }
 
         wordmark = Plain(76, FontStyle.Bold);
         tagline = Plain(17);
-        tagline.alignment = TextAnchor.MiddleCenter;
         sentence = Plain(36);
         placeholder = Plain(36);
         hint = Plain(16);
-        tiny = Plain(12);
         status = Plain(44);
         statusSub = Plain(18);
         pinLabel = Plain(14, FontStyle.Bold);
 
-        blank = new GUIStyle(GUI.skin.textField) { font = sans, fontSize = 36, richText = false, padding = new RectOffset(0, 0, 0, 0), alignment = TextAnchor.MiddleLeft };
+        // Built from the label, not the text field, so it draws no box: just the type and a caret.
+        blank = Plain(36);
         foreach (var state in new[] { blank.normal, blank.hover, blank.active, blank.focused, blank.onNormal, blank.onHover, blank.onActive, blank.onFocused })
         {
             state.background = null;
-            state.textColor = ink;
+            state.scaledBackgrounds = Array.Empty<Texture2D>();
         }
-        GUI.skin.settings.cursorColor = accent;
+        GUI.skin.settings.cursorColor = ink;
         GUI.skin.settings.cursorFlashSpeed = 1.1f;
-        GUI.skin.settings.selectionColor = new Color(accent.r, accent.g, accent.b, 0.35f);
+        GUI.skin.settings.selectionColor = new Color(ink.r, ink.g, ink.b, 0.2f);
     }
 
     /// <summary>
