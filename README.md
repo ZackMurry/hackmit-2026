@@ -95,7 +95,7 @@ lip-synced speech, E-to-talk, walking, schedule).
 | `idleClips`, `walkClip`    | Resources paths of mocap clips. No walk clip → procedural gait.                                         |
 | `greeting`                 | Line said (placeholder voice) when the player first walks up; a scenario's `opening_line` overrides it. |
 | `seat`                     | Seat id from `seats.json` to start the scene sitting in.                                                |
-| `moves[].trigger`          | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`). |
+| `moves[].trigger`          | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`), `"greet"` (this NPC finished its greeting). |
 | `moves[].delay`            | Seconds to wait after the trigger, e.g. walk over 4 s after `order` is done.                     |
 | `moves[].path`             | World-space waypoints. Y is a hint; feet snap to the collider below.                                    |
 | `moves[].speed`            | Override m/s for this move (0 = NPC default).                                                           |
@@ -129,7 +129,15 @@ movement key stands back up. Holding **E** to talk works while seated.
 
 World coordinates: the splat is rendered with scale `(2, -2, 2)`, so `world = raw_spz * (2, -2, 2)`.
 The ModernHouse floor is at world `y ≈ -1.52`, the CancunCafe floor at `y ≈ -1.50` (the café runs
-along +z: entrance near the origin, counter at `z ≈ 14`).
+along +z; it opens onto the sand along its +x side between `z ≈ 5` and `z ≈ 10`, counter at `z ≈ 14`).
+
+### CancunCafe flow
+
+The player spawns on the sand outside the entrance facing the café. Mariana (waitress) waits just
+inside; when the player walks up she greets them and says "sígueme", then walks to the table
+(`"trigger": "greet"`) and later back to the counter. Luis is already seated at `table_a`
+(`"seat"`); the free chair opposite is `table_b` — press **F** to sit, then hold **E** to talk to
+him. Avatars: `Avatars/Female_Adult_08` and `Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
 
 ## Worlds
 

@@ -4,8 +4,9 @@ using UnityEngine;
 
 /// <summary>
 /// Runs the <see cref="NpcMove"/> list from npcs.json: fires each move when its
-/// trigger happens (scene start, a quest completing, or another of this NPC's
-/// moves finishing), waits the configured delay, then hands the path to
+/// trigger happens (scene start, a quest completing, another of this NPC's
+/// moves finishing, or the NPC finishing its greeting), waits the configured
+/// delay, then hands the path to
 /// <see cref="NpcWalker"/>. A move with <c>sit</c> ends with the NPC sitting down.
 /// </summary>
 [RequireComponent(typeof(NpcWalker))]
@@ -29,6 +30,16 @@ public class NpcSchedule : MonoBehaviour
         loader = GetComponent<NpcAvatarLoader>();
         loader.Loaded += _ => StartCoroutine(AfterSettle());
         walker.Arrived += OnArrived;
+        var talk = GetComponent<NpcConversation>();
+        if (talk != null)
+            talk.Greeted += OnGreeted;
+    }
+
+    void OnGreeted()
+    {
+        foreach (var move in moves)
+            if (move.trigger == NpcMove.TriggerGreet)
+                Fire(move);
     }
 
     void Start()

@@ -69,15 +69,17 @@ public class NpcMove
     public const string TriggerStart = "start";
     public const string TriggerQuest = "quest";
     public const string TriggerMove = "move";
+    public const string TriggerGreet = "greet";
 
     [Tooltip("Name other moves can chain from with trigger \"move\".")]
     public string id;
 
     [Tooltip("\"start\": when the scene loads. \"quest\": when quest `after` is completed. " +
-             "\"move\": when this NPC finishes move `after`.")]
+             "\"move\": when this NPC finishes move `after`. " +
+             "\"greet\": when this NPC has finished saying its greeting to the player.")]
     public string trigger = TriggerStart;
 
-    [Tooltip("Quest id or move id, depending on trigger.")]
+    [Tooltip("Quest id or move id, depending on trigger (unused for start/greet).")]
     public string after = "";
 
     [Tooltip("Seconds to wait after the trigger before setting off.")]

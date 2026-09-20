@@ -54,6 +54,8 @@ public class NpcConversation : MonoBehaviour
     /// <summary>Last completed exchange, for other HUDs / logging.</summary>
     public Exchange Last { get; private set; }
     public event Action<Exchange> Replied;
+    /// <summary>Fired once, when the greeting has been said (see <see cref="NpcMove.TriggerGreet"/>).</summary>
+    public event Action Greeted;
 
     NpcSpeaker speaker;
     NpcInteractable interactable;
@@ -180,6 +182,7 @@ public class NpcConversation : MonoBehaviour
         Last = new Exchange { reply = greeting, time = Time.time };
         yield return Say(greeting);
         Busy = false;
+        Greeted?.Invoke();
     }
 
     /// <summary>Voice a line: the server's audio when it sent some, else the placeholder blah-blah.</summary>
