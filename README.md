@@ -129,13 +129,13 @@ movement key stands back up. Holding **E** to talk works while seated.
 
 World coordinates: the splat is rendered with scale `(2, -2, 2)`, so `world = raw_spz * (2, -2, 2)`.
 The ModernHouse floor is at world `y ≈ -1.52`, the CancunCafe floor at `y ≈ -1.50` (the café runs
-along +z; it opens onto the sand along its +x side between `z ≈ 5` and `z ≈ 10`, counter at `z ≈ 14`).
+along +z; it opens onto the sand along its +x side: a doorway at the south-east corner around `(4, 0.7)` and a wide opening between `z ≈ 5` and `z ≈ 10`; counter at `z ≈ 14`).
 
 ### CancunCafe flow
 
-The player spawns on the sand outside the entrance facing the café. Mariana (waitress) waits just
-inside; when the player walks up she greets them and says "sígueme", then walks to the table
-(`"trigger": "greet"`) and later back to the counter. Luis is already seated at `table_a`
+The player spawns on the sand outside the south-east doorway facing the café. Mariana (waitress)
+waits just inside; when the player walks up she greets them and says "sígueme", then walks up the
+aisle to the table (`"trigger": "greet"`) and later back to the counter. Luis is already seated at `table_a`
 (`"seat"`); the free chair opposite is `table_b` — press **F** to sit, then hold **E** to talk to
 him. Avatars: `Avatars/Female_Adult_08` and `Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
 
