@@ -1,0 +1,105 @@
+{
+  "scenario_id": "cafe_cancun_v1",
+  "title": "Café Nader — Cancún",
+  "setting": "A small independent café a few blocks from Avenida Náder in downtown Cancún, 5:30 pm. Table service. Maria greets you at the door and walks you to the window table where Luis is already sitting.",
+  "language": "es",
+  "language_label": "Mexican Spanish",
+  "level": "A2",
+  "currency": "MXN",
+
+  "npcs": [
+    {
+      "npc_id": "maria",
+      "name": "Maria",
+      "role": "Waitress at Café Nader. You meet her first; she seats you with Luis and takes your order.",
+      "gender": "female",
+      "voice_id": "qGUobVOQFekqmtk6YZdK",
+      "voice_name": "Maria (MX female)",
+      "prompt_file": "prompts/maria.md",
+      "first_message": "¡Buenas tardes! Pásale, joven. Tu amigo ya está en la mesa, ven conmigo. ¿Qué te sirvo?",
+      "tools": ["serve_order", "show_bill", "play_gesture"],
+      "max_duration_seconds": 180,
+      "tts": { "speed": 1.0, "stability": 0.45, "similarity_boost": 0.8 },
+      "turn": { "eagerness": "patient", "timeout": 8 }
+    },
+    {
+      "npc_id": "luis",
+      "name": "Luis",
+      "role": "Marine biologist from Guadalajara. The person you came to meet, already at the table.",
+      "gender": "male",
+      "voice_id": "LZ0fpGC6iVFQ3i0EHB7h",
+      "voice_name": "Luis (MX male)",
+      "prompt_file": "prompts/luis.md",
+      "first_message": "¡Hola! ¿Qué tal? Siéntate, siéntate. Qué bueno que llegaste.",
+      "tools": ["play_gesture"],
+      "max_duration_seconds": 300,
+      "tts": { "speed": 1.0, "stability": 0.45, "similarity_boost": 0.8 },
+      "turn": { "eagerness": "patient", "timeout": 8 }
+    }
+  ],
+
+  "asr_keywords": [
+    "café de olla", "horchata", "jamaica", "concha", "chilaquiles",
+    "capuchino", "pay de limón", "americano", "deslactosada"
+  ],
+
+  "gestures": ["wave", "nod", "shake_head", "laugh", "think", "shrug", "point_menu", "lean_in"],
+
+  "goals": [
+    { "id": "G1", "npc_id": "maria", "core": true,  "label": "Order something in Spanish",
+      "evidence_required": "The learner names a menu item inside a request form (quiero, quisiera, me da, me pones, para mí, un X por favor), and serve_order fires within the next two turns. Pointing, English, or only saying 'sí' to a suggestion does not count." },
+    { "id": "G2", "npc_id": "maria", "core": true,  "label": "Ask what something costs, before being told",
+      "evidence_required": "The learner asks a price question (¿cuánto cuesta…?, ¿cuánto es?, ¿cuánto le debo?, ¿a cómo está…?) before Maria volunteers the total." },
+    { "id": "G3", "npc_id": "maria", "core": false, "label": "Handle an unexpected fast question",
+      "evidence_required": "Maria asks one of her clarifying questions and the learner answers appropriately within two turns, in Spanish." },
+    { "id": "G4", "npc_id": "luis",  "core": true,  "label": "Hold a personal conversation",
+      "evidence_required": "At least two full-clause statements about themselves across at least three back-and-forth exchanges. One-word answers do not count." },
+    { "id": "G5", "npc_id": "luis",  "core": true,  "label": "Ask a follow-up about something Luis said",
+      "evidence_required": "The learner's question refers to content from one of Luis's previous two turns. Quote both his line and their question. A bare '¿y tú?' does not count." },
+    { "id": "G6", "npc_id": "any",   "core": false, "label": "Recover in Spanish when lost",
+      "evidence_required": "The learner uses a Spanish repair phrase at least once (¿cómo?, ¿mande?, ¿puedes repetir?, más despacio por favor, no entendí). Switching to English does not count." }
+  ],
+
+  "tools": {
+    "serve_order": {
+      "type": "client",
+      "description": "Place the customer's complete order on the table. Call once, when the order is final. Always pass the FULL order, not just newly added items \u2014 this call replaces any previous one. Returns the total price in pesos.",
+      "expects_response": true,
+      "response_timeout_secs": 3,
+      "parameters": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "description": "Menu item ids, one entry per unit ordered. Two conchas is [\"concha\",\"concha\"].",
+            "items": { "type": "string", "description": "A menu item id" }
+          },
+          "to_go": { "type": "boolean", "description": "True if the customer said para llevar." }
+        }
+      }
+    },
+    "show_bill": {
+      "type": "client",
+      "description": "Show the customer the bill for what they have ordered. Call when they ask what they owe, or try to leave without asking. Returns the total in pesos.",
+      "expects_response": true,
+      "response_timeout_secs": 3,
+      "parameters": { "type": "object", "properties": {} }
+    },
+    "play_gesture": {
+      "type": "client",
+      "description": "Make your body perform a gesture while you speak. At most one per reply.",
+      "expects_response": false,
+      "parameters": {
+        "type": "object",
+        "required": ["gesture"],
+        "properties": {
+          "gesture": {
+            "type": "string",
+            "description": "One of: wave, nod, shake_head, laugh, think, shrug, point_menu, lean_in"
+          }
+        }
+      }
+    }
+  }
+}

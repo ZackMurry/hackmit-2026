@@ -19,9 +19,12 @@ from uuid import UUID
 
 import httpx
 
+from .scene import RunState, ScenePack, default_pack_dir
 from .speech import SpeechInput, SpeechOutput, SpeechInputError, SpeechUnavailable
 
 MAX_REPLY = 10 * 1024 * 1024 - 44  # leave room for a WAV header
+MAX_RUNS = 64
+MAX_ACTIONS_PER_TURN = 16
 
 
 def wav_bytes(pcm: bytes, rate: int) -> bytes:
@@ -43,11 +46,19 @@ class Session:
     context: tuple | None = None
     rate: int | None = None
     touched: float = field(default_factory=time.monotonic)
+    # Scene actions the character triggered during the turn in flight. The reader
+    # task appends; respond() drains. Cleared before each turn so actions are never
+    # attributed to the wrong one.
+    actions: list = field(default_factory=list)
+    # The visit this conversation belongs to, and who is speaking. Both are needed by
+    # the reader task, which handles tool calls off the request path.
+    run: RunState | None = None
+    npc_id: str = ""
 
 
 class ElevenLabsSpeech:
     def __init__(self, key: str, agents: dict[str, str], *, stt_model="scribe_v2",
-                 client=None, connect=None, quiet=1.4, idle_seconds=120):
+                 client=None, connect=None, quiet=1.4, idle_seconds=120, pack=None):
         self.agents = agents
         self.stt_model = stt_model
         self.http = client or httpx.AsyncClient(
@@ -56,7 +67,19 @@ class ElevenLabsSpeech:
         self.quiet = quiet
         self.idle_seconds = idle_seconds
         self.sessions: dict[UUID, Session] = {}
+        # One RunState per visit, shared by that visit's characters so Luis can be
+        # told what the learner ordered from Maria.
+        self.runs: dict[str, RunState] = {}
+        self.pack: ScenePack | None = pack
         self.reaper = None
+
+    def _run_state(self, run_id: str) -> RunState:
+        state = self.runs.get(run_id)
+        if state is None:
+            if len(self.runs) >= MAX_RUNS:  # oldest-first, so a long demo never leaks
+                self.runs.pop(next(iter(self.runs)), None)
+            state = self.runs[run_id] = RunState()
+        return state
 
     async def _transcribe(self, request: SpeechInput) -> str:
         data, media = request.audio, request.media_type
@@ -84,6 +107,36 @@ class ElevenLabsSpeech:
             raise SpeechInputError("No speech was detected")
         return text
 
+    async def _handle_tool(self, session: Session, event: dict):
+        """Answer a tool call at once and record what the scene should do.
+
+        Always replies before returning. A blocking tool left unanswered stalls the
+        conversation for up to its timeout, and that time is billed, so the price is
+        computed here rather than anywhere that could wait on a game client.
+        """
+        name = str(event.get("tool_name") or "")
+        call_id = event.get("tool_call_id")
+        outcome = None
+        if self.pack is not None and session.run is not None:
+            outcome = self.pack.dispatch(session.npc_id, name, event.get("parameters"),
+                                         session.run)
+        if outcome is not None and outcome.action is not None:
+            if len(session.actions) < MAX_ACTIONS_PER_TURN:
+                session.actions.append(outcome.action)
+
+        # Absent expects_response we answer anyway: an unanswered blocking call is
+        # far more costly than a redundant result.
+        if call_id is not None and event.get("expects_response", True):
+            if outcome is None:
+                result, is_error = "Scene actions are unavailable right now.", True
+            else:
+                result = outcome.result or "Done."
+                is_error = outcome.is_error
+            with suppress(Exception):
+                await session.ws.send(json.dumps({
+                    "type": "client_tool_result", "tool_call_id": call_id,
+                    "result": result, "is_error": is_error}))
+
     async def _pump(self, session: Session):
         try:
             async for raw in session.ws:
@@ -94,10 +147,7 @@ class ElevenLabsSpeech:
                     await session.ws.send(json.dumps({"type": "pong",
                         "event_id": message["ping_event"]["event_id"]}))
                 elif kind == "client_tool_call":
-                    event = message["client_tool_call"]
-                    await session.ws.send(json.dumps({"type": "client_tool_result",
-                        "tool_call_id": event["tool_call_id"], "is_error": True,
-                        "result": "Scene actions are not implemented by this HTTP API."}))
+                    await self._handle_tool(session, message["client_tool_call"])
                 else:
                     session.queue.put_nowait(message)
         except asyncio.CancelledError:
@@ -177,8 +227,15 @@ class ElevenLabsSpeech:
             from websockets.asyncio.client import connect
         session.ws = await connect(result.json()["signed_url"], max_size=16 * 1024 * 1024)
         session.reader = asyncio.create_task(self._pump(session))
+        order = "nada"
+        if self.pack is not None and session.run is not None:
+            order = session.run.order_summary_es(self.pack.menu)
         await session.ws.send(json.dumps({"type": "conversation_initiation_client_data",
-            "dynamic_variables": {"learner_name": "amigo", "user_order": "nada"}}))
+            "dynamic_variables": {
+                "learner_name": (request.learner_name or "amigo")[:60],
+                # Set when the socket opens, which is why talking to Maria first and
+                # then walking to Luis lets him mention what you ordered.
+                "user_order": order}}))
         # The teammate's agents greet first; exclude that greeting from the reply.
         await self._turn(session, greeting=True)
         if session.rate is None:
@@ -204,6 +261,8 @@ class ElevenLabsSpeech:
             raise SpeechInputError("A speech turn is already running for this session")
         async with session.lock:
             try:
+                session.npc_id = request.npc_id
+                session.run = self._run_state(request.run_id or str(request.session_id))
                 text = await self._transcribe(request)
                 context = (request.npc_id, request.scenario_id)
                 if session.ws is None or session.context != context or session.reader.done():
@@ -213,9 +272,11 @@ class ElevenLabsSpeech:
                 # Discard unsolicited idle messages before sending the next turn.
                 while not session.queue.empty():
                     session.queue.get_nowait()
+                session.actions.clear()  # only this turn's actions reach the client
                 await session.ws.send(json.dumps({"type": "user_message", "text": text}))
                 audio, response = await self._turn(session)
-                return SpeechOutput(wav_bytes(audio, session.rate), "audio/wav", session.rate, text, response)
+                return SpeechOutput(wav_bytes(audio, session.rate), "audio/wav", session.rate,
+                                    text, response, tuple(session.actions))
             except BaseException:
                 # Also close on request cancellation/timeout to avoid stale replies.
                 await self._close(session)
@@ -256,5 +317,9 @@ def create_provider() -> ElevenLabsSpeech:
               if key.startswith("AGENT_ID_") and value}
     if "luis" not in agents and os.getenv("SMOKE_AGENT_ID"):
         agents["luis"] = os.environ["SMOKE_AGENT_ID"]
+    pack = None
+    with suppress(Exception):  # no scenario pack still gives a talking character
+        pack = ScenePack.load(default_pack_dir())
     return ElevenLabsSpeech(os.environ["ELEVENLABS_API_KEY"], agents,
-                           stt_model=os.getenv("ELEVENLABS_STT_MODEL", "scribe_v2"))
+                           stt_model=os.getenv("ELEVENLABS_STT_MODEL", "scribe_v2"),
+                           pack=pack)

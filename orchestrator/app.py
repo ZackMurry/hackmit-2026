@@ -1,15 +1,17 @@
 import asyncio
 import base64
+import json
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .models import GeneratedScenario, ScenarioRequest, ScenarioResponse
+from .scene import ScenePack, default_pack_dir
 from .scenarios import OpenAIScenarios, ScenarioProvider, ScenarioStore
 from .speech import SpeechInputError, SpeechUnavailable, SUPPORTED_AUDIO_TYPES, SpeechInput, SpeechOutput, SpeechProvider, load_speech_provider
 
@@ -43,8 +45,14 @@ async def provider_call(awaitable, timeout: float):
 
 def create_app(*, speech: SpeechProvider | None = None,
                scenarios: ScenarioProvider | None = None,
-               data_dir: Path | None = None, timeout: float = 60) -> FastAPI:
+               data_dir: Path | None = None, timeout: float = 60,
+               pack: "ScenePack | None" = None) -> FastAPI:
     store = ScenarioStore(data_dir or Path(os.getenv("SCENARIO_DIR", "runs/scenarios")))
+    if pack is None:
+        # An authored scenario is optional: without one the API still relays speech,
+        # it just cannot price an order or describe its cast.
+        with suppress(Exception):
+            pack = ScenePack.load(default_pack_dir())
 
     @asynccontextmanager
     async def lifespan(app):
@@ -56,8 +64,10 @@ def create_app(*, speech: SpeechProvider | None = None,
         if speech is None and os.getenv("SPEECH_ADAPTER"):
             app.state.speech = load_speech_provider(os.environ["SPEECH_ADAPTER"])
         elif speech is None and os.getenv("ELEVENLABS_API_KEY"):
-            from .elevenlabs_adapter import create_provider
+            from .elevenlabs_adapter import ElevenLabsSpeech, create_provider
             app.state.speech = create_provider()
+            if pack is not None and isinstance(app.state.speech, ElevenLabsSpeech):
+                app.state.speech.pack = pack  # one loaded pack, shared
         try:
             yield
         finally:
@@ -71,7 +81,63 @@ def create_app(*, speech: SpeechProvider | None = None,
     @app.get("/health")
     async def health():
         return {"status": "ok", "scenarios_ready": app.state.scenarios is not None,
-                "speech_ready": app.state.speech is not None}
+                "speech_ready": app.state.speech is not None,
+                "scenario_pack": pack.scenario.scenario_id if pack else None}
+
+    @app.get("/v1/npcs")
+    async def npcs():
+        """Who the client can talk to, and what to send as npc_id.
+
+        Lets the game discover the cast instead of hardcoding ids, and shows at a
+        glance which characters actually have an agent configured.
+        """
+        if pack is None:
+            raise HTTPException(503, "No scenario pack is loaded")
+        configured = getattr(app.state.speech, "agents", {}) or {}
+        return {
+            "scenario_id": pack.scenario.scenario_id,
+            "title": pack.scenario.title,
+            "setting": pack.scenario.setting,
+            "language": pack.scenario.language,
+            "language_label": pack.scenario.language_label,
+            "level": pack.scenario.level,
+            "currency": pack.scenario.currency,
+            "gestures": pack.scenario.gestures,
+            "npcs": [{
+                "npc_id": npc.npc_id,
+                "name": npc.name,
+                "role": npc.role,
+                "gender": npc.gender,
+                "greeting": npc.first_message,
+                "greeting_audio": f"/v1/npcs/{npc.npc_id}/greeting"
+                                  if _greeting_path(npc.npc_id) else None,
+                "actions": npc.tools,
+                "max_duration_seconds": npc.max_duration_seconds,
+                "ready": npc.npc_id in configured,
+            } for npc in pack.scenario.npcs],
+            "goals": [g.model_dump() for g in pack.scenario.goals],
+            "menu": [{"item_id": k, "name_es": v.name_es, "price_mxn": v.price_mxn,
+                      "available": v.available} for k, v in pack.menu.items.items()],
+        }
+
+    def _greeting_path(npc_id: str) -> Path | None:
+        if pack is None or pack.root is None or npc_id not in pack.npcs:
+            return None
+        candidate = Path(pack.root) / "greetings" / f"{npc_id}.wav"
+        return candidate if candidate.is_file() else None
+
+    @app.get("/v1/npcs/{npc_id}/greeting")
+    async def greeting(npc_id: str):
+        """The character's opening line as audio, pre-recorded so it costs nothing.
+
+        Play this when the player walks up. It is the same voice and wording the live
+        agent opens with.
+        """
+        path = _greeting_path(npc_id)
+        if path is None:
+            raise HTTPException(404, "No greeting audio for this character")
+        return FileResponse(path, media_type="audio/wav",
+                            headers={"Cache-Control": "public, max-age=3600"})
 
     @app.post("/v1/scenarios", response_model=ScenarioResponse, openapi_extra={
         "requestBody": {"required": True, "content": {"application/json": {
@@ -127,7 +193,10 @@ def create_app(*, speech: SpeechProvider | None = None,
                       npc_id: str = Query(pattern=r"^[a-z][a-z0-9_]{0,63}$"),
                       scenario_id: UUID | None = None,
                       sample_rate: int | None = Query(default=None, ge=8000, le=48000),
-                      response_format: Literal["audio", "json"] = "audio"):
+                      response_format: Literal["audio", "json"] = "audio",
+                      run_id: str | None = Query(default=None, max_length=64,
+                                                 pattern=r"^[A-Za-z0-9_-]+$"),
+                      learner_name: str | None = Query(default=None, max_length=60)):
         media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
         if media_type not in SUPPORTED_AUDIO_TYPES:
             raise HTTPException(415, "Unsupported audio Content-Type")
@@ -144,7 +213,8 @@ def create_app(*, speech: SpeechProvider | None = None,
             context = saved.scenario.model_dump()
         if app.state.speech is None:
             raise HTTPException(503, "Speech adapter is not configured")
-        turn = SpeechInput(audio, media_type, session_id, npc_id, scenario_id, context, sample_rate)
+        turn = SpeechInput(audio, media_type, session_id, npc_id, scenario_id, context,
+                           sample_rate, run_id, learner_name)
 
         async def validated():
             result = await app.state.speech.respond(turn)
@@ -160,6 +230,7 @@ def create_app(*, speech: SpeechProvider | None = None,
             return result
 
         output = await provider_call(validated(), timeout)
+        actions = [a for a in output.actions if isinstance(a, dict)]
         headers = {"X-Session-ID": str(session_id), "Cache-Control": "no-store"}
         if output.sample_rate is not None:
             headers["X-Audio-Sample-Rate"] = str(output.sample_rate)
@@ -167,8 +238,16 @@ def create_app(*, speech: SpeechProvider | None = None,
             return JSONResponse({"session_id": str(session_id), "npc_id": npc_id,
                 "audio_base64": base64.b64encode(output.audio).decode("ascii"),
                 "media_type": output.media_type, "sample_rate": output.sample_rate,
-                "user_transcript": output.user_transcript, "agent_transcript": output.agent_transcript},
+                "user_transcript": output.user_transcript,
+                "agent_transcript": output.agent_transcript,
+                "actions": actions},
                 headers=headers)
+        # Raw-audio callers still need the scene actions, and a header is the only
+        # place left to put them. Skipped entirely if it would be unreasonably large.
+        if actions:
+            encoded = json.dumps(actions, separators=(",", ":"))
+            if len(encoded) <= 2000:
+                headers["X-Scene-Actions"] = encoded
         return Response(output.audio, media_type=output.media_type, headers=headers)
 
     return app

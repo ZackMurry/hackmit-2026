@@ -10,7 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from orchestrator.app import create_app
-from orchestrator.elevenlabs_adapter import ElevenLabsSpeech, wav_bytes
+from orchestrator.elevenlabs_adapter import ElevenLabsSpeech
 from orchestrator.speech import SpeechInput, SpeechInputError, SpeechUnavailable
 
 
@@ -58,7 +58,7 @@ def make_provider(**kwargs):
             assert b"scribe_v2" in request.content
             assert b"RIFF" in request.content
             return httpx.Response(200, json={"text": "Quiero un café"})
-        assert request.url.params["agent_id"] in {"agent-luis", "agent-mariana"}
+        assert request.url.params["agent_id"] in {"agent-luis", "agent-maria"}
         return httpx.Response(200, json={"signed_url": "wss://example.invalid/signed"})
 
     async def connect(url, **options):
@@ -66,7 +66,7 @@ def make_provider(**kwargs):
         sockets.append(socket)
         return socket
 
-    provider = ElevenLabsSpeech("test-key", {"luis": "agent-luis", "mariana": "agent-mariana"},
+    provider = ElevenLabsSpeech("test-key", {"luis": "agent-luis", "maria": "agent-maria"},
         client=httpx.AsyncClient(base_url="https://example.invalid", transport=httpx.MockTransport(handler)),
         connect=connect, quiet=.005, idle_seconds=.05)
     return provider, sockets, requests
@@ -91,7 +91,7 @@ def test_speech_reuses_session_excludes_greeting_and_switches_npc():
             assert any(m["type"] == "pong" for m in sockets[0].sent)
             await provider.respond(request)
             assert len(sockets) == 1
-            await provider.respond(turn(request.session_id, "mariana"))
+            await provider.respond(turn(request.session_id, "maria"))
             assert len(sockets) == 2
             assert sockets[0].closed
             await provider.end_session(request.session_id)

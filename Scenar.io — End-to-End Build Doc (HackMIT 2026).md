@@ -26,7 +26,7 @@ Many learners can pass a grammar quiz and still freeze at a counter. Classroom S
 
 ### Who it is for
 
-The first user is an adult at CEFR level A2 to B1. CEFR is the European scale for language ability; A2 to B1 means "knows present and past tenses, has a few hundred words, cannot yet hold a conversation comfortably". They have a trip, a move or a date coming up. They are anxious about one concrete situation, not about Spanish in general.
+The first user is an adult at CEFR level A2 to B1. CEFR is the European scale for language ability; A2 to B1 means "knows present and past tenses, has a few hundred words, cannot yet hold a conversation comfortably". They have a trip, a move or a meeting coming up. They are anxious about one concrete situation, not about Spanish in general.
 
 ### What exists today and where it falls short
 
@@ -118,32 +118,32 @@ Read this once. Every later section assumes these words.
 | Orchestrator | The one Python process that connects everything. |
 | Bridge | The local WebSocket between the orchestrator and Unity, and the message format on it (section 10). |
 
-## 3. The café date scenario
+## 3. The café scenario
 
-One run is a first date at a small café in Cancún: you order at the counter from the barista, then sit and talk with your date. It takes 4 to 6 minutes and has four core goals and two bonus goals.
+One run is a first meeting over coffee at a small café in Cancún: the waitress walks you to the table, you order from her there, then talk with the person you came to meet. It takes 4 to 6 minutes and has four core goals and two bonus goals.
 
 Scenario id: `cafe_cancun_v1`. Everything in this section lives in `scenarios/cafe_cancun/scenario.yaml` so the code never hard-codes it.
 
 ### Setting
 
-Café Nader is a small independent café a few blocks from Avenida Náder in downtown Cancún, not the hotel zone. It is 5:30 pm and warm. There is a wooden counter with an espresso machine, a chalkboard menu on the wall behind it, a pastry case, and four or five tables. Order and pay at the counter, then sit. The café name is invented.
+Café Nader is a small independent café a few blocks from Avenida Náder in downtown Cancún, not the hotel zone. It is 5:30 pm and warm. There is a wooden counter with an espresso machine, a chalkboard menu on the wall behind it, a pastry case, and four or five tables. It is table service: the waitress seats you, takes your order at the table, and brings the bill when you ask. The café name is invented.
 
-The player spawns just inside the door, about 4 metres from the counter. The date is already seated at a table by the window.
+The player spawns just inside the door, about 4 metres from the table by the window. Maria meets them at the door and walks them over. Luis is already sitting at that table.
 
 ### Characters
 
 Two characters, two ElevenLabs agents, two voices. Only one conversation is live at a time: whoever you are standing next to.
 
-|  | Luis, the barista | Mariana, the date |
+|  | Maria, the waitress | Luis, the person you are meeting |
 | --- | --- | --- |
-| `npc` id | `luis` | `mariana` |
-| Age and background | About 50, owner, from Mérida, has run the café for 12 years | 28, marine biologist from Guadalajara, moved to Cancún 2 years ago for reef work |
-| Manner | Warm, quick, efficient. Talks fast because there is usually a queue. Calls customers "joven" or "amigo". | Curious, teasing, easy to talk to. Asks questions and expects some back. |
-| Register | Informal "tú", Mexican idiom: "¿qué te doy?", "¿algo más?", "ahorita te lo paso" | Informal "tú": "¿neta?", "qué padre", "¿y tú qué onda?" |
-| What they withhold | Never states a price or the total until asked | Never carries the conversation alone. After two short answers in a row she goes quiet and waits. |
+| `npc` id | `maria` | `luis` |
+| Age and background | About 40, from Mérida, has worked at Café Nader for years | 29, marine biologist from Guadalajara, moved to Cancún 2 years ago for sea turtle conservation work |
+| Manner | Warm, quick, practical. Greets you at the door, walks you to the table and takes your order there. Calls customers "joven". | Curious, playful, easy to talk to. Teases a little. Asks questions and expects some back. |
+| Register | Informal "tú", Mexican idiom: "¿qué te sirvo?", "¿algo más?", "ahorita te lo traigo" | Informal "tú": "¿neta?", "qué padre", "¿y tú qué onda?" |
+| What they withhold | Never states a price or the total until asked | Never carries the conversation alone. After two short answers in a row he goes quiet and waits. |
 | Curveball | One fast clarifying question per order, see goal G3 | Mentions one specific detail that invites a follow-up, see goal G5 |
 
-The date's name, gender and voice are swappable per learner through dynamic variables and a voice override. Mariana is the default.
+Luis's name, gender and voice are swappable per learner through dynamic variables and a voice override. Luis is the default.
 
 ### Assumed learner
 
@@ -168,7 +168,7 @@ Prices are in Mexican pesos (MXN) and are plausible, not sourced. This table is 
 | `pay_limon` | Pay de limón | 70 |
 | `chilaquiles` | Chilaquiles verdes | 120 |
 
-Today the café is out of `pay_limon`. Luis offers the concha instead. This is one of the curveballs.
+Today the café is out of `pay_limon`. Maria offers the concha instead. This is one of the curveballs.
 
 ### Goals
 
@@ -176,11 +176,11 @@ A goal is complete only when the director sees evidence in the learner's own wor
 
 | Id | Goal | With | Complete when | Does not count |
 | --- | --- | --- | --- | --- |
-| G1 `order` | Order at least one item in Spanish | Luis | The learner names a menu item inside a request form: "quiero", "quisiera", "me da", "me das", "me pones", "para mí", or "un X, por favor". Luis then calls `serve_order`. | Pointing, English, or only saying "sí" when Luis suggests something |
-| G2 `ask_price` | Ask what something costs, or the total, before being told | Luis | The learner asks a price question: "¿cuánto cuesta...?", "¿cuánto es?", "¿cuánto le debo?", "¿qué precio tiene...?", "¿a cómo está...?" | Luis volunteering the total because the learner tried to leave |
-| G4 `small_talk` | Hold a personal conversation for at least three exchanges | Mariana | The learner makes at least two statements about themselves that are full clauses with a verb, across at least three back-and-forth exchanges on a personal topic | One-word answers, "sí", "no", "bien" |
-| G5 `follow_up` | Ask a follow-up question about something Mariana actually said | Mariana | The learner's question refers to content from one of Mariana's previous two turns. Example: she mentions tagging sea turtles at night, and the learner asks "¿por qué de noche?" | A bare "¿y tú?", or a new unrelated question |
-| G3 `curveball` (bonus) | Handle an unexpected fast question | Luis | Luis asks one of: "¿para aquí o para llevar?", "¿leche entera o deslactosada?", "se me acabó el pay, ¿te ofrezco una concha?". The learner answers appropriately within two turns, with or without asking for a repeat. | Silence, or English |
+| G1 `order` | Order at least one item in Spanish | Maria | The learner names a menu item inside a request form: "quiero", "quisiera", "me da", "me das", "me pones", "para mí", or "un X, por favor". Maria then calls `serve_order`. | Pointing, English, or only saying "sí" when Maria suggests something |
+| G2 `ask_price` | Ask what something costs, or the total, before being told | Maria | The learner asks a price question: "¿cuánto cuesta...?", "¿cuánto es?", "¿cuánto le debo?", "¿qué precio tiene...?", "¿a cómo está...?" | Maria volunteering the total because the learner tried to leave |
+| G4 `small_talk` | Hold a personal conversation for at least three exchanges | Luis | The learner makes at least two statements about themselves that are full clauses with a verb, across at least three back-and-forth exchanges on a personal topic | One-word answers, "sí", "no", "bien" |
+| G5 `follow_up` | Ask a follow-up question about something Luis actually said | Luis | The learner's question refers to content from one of Luis's previous two turns. Example: he mentions tagging sea turtles at night, and the learner asks "¿por qué de noche?" | A bare "¿y tú?", or a new unrelated question |
+| G3 `curveball` (bonus) | Handle an unexpected fast question | Maria | Maria asks one of: "¿para tomar aquí o para llevar?", "¿leche entera o deslactosada?", "se me acabó el pay, ¿te ofrezco una concha?". The learner answers appropriately within two turns, with or without asking for a repeat. | Silence, or English |
 | G6 `repair` (bonus) | Recover in Spanish when lost | Either | The learner uses a Spanish repair phrase at least once: "¿cómo?", "¿mande?", "¿puedes repetir?", "más despacio, por favor", "¿qué significa...?", "no entendí" | Switching to English to ask |
 
 ### Success
@@ -198,10 +198,10 @@ Two counters are shown but do not block a pass: the number of learner turns in E
 
 | Phase | Target | Hard cap |
 | --- | --- | --- |
-| Walk in, approach counter | 15 s | none |
-| Conversation with Luis | 60 to 90 s | 180 s (`max_duration_seconds`) |
+| Walk in, met at the door | 15 s | none |
+| Conversation with Maria | 60 to 90 s | 180 s (`max_duration_seconds`) |
 | Walk to table | 10 s | none |
-| Conversation with Mariana | 2 to 3 min | 300 s |
+| Conversation with Luis | 2 to 3 min | 300 s |
 | Feedback screen | 1 min to read | none |
 | Whole run | 4 to 6 min | about 9 min |
 
@@ -214,7 +214,7 @@ A judge demo uses a shortened run of about 2.5 minutes (section 14).
 3. **Phrases that would have helped**: two or three phrases for the moments where the learner stalled or used English.
 4. What went well: one specific thing, quoted.
 5. Counters: English turns, hints, number of repair phrases, time taken.
-6. A suggested next run, such as "same café, Luis is busier and asks two curveballs".
+6. A suggested next run, such as "same café, Maria is busier and asks two curveballs".
 
 The screen says "what we heard", not "what you said". Speech recognition makes errors and sometimes silently fixes the learner's grammar. Section 11 covers this.
 
@@ -381,7 +381,7 @@ The orchestrator owns this state and broadcasts it to Unity as `session.state` m
 | `python -m orchestrator` | Voice lane, first | `ws://127.0.0.1:8765` | Yes: ElevenLabs and OpenAI |
 | Unity Editor in Play mode, or a build | Unity lane, second | Nothing. Connects out to the bridge and retries every 2 s. | No |
 
-Secrets live only in `orchestrator/.env`: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AGENT_ID_LUIS`, `AGENT_ID_MARIANA`, `DIRECTOR_MODEL`, `TUTOR_MODEL`. The file is git-ignored. Nothing secret is ever in the Unity project.
+Secrets live only in `orchestrator/.env`: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AGENT_ID_MARIA`, `AGENT_ID_LUIS`, `DIRECTOR_MODEL`, `TUTOR_MODEL`. The file is git-ignored. Nothing secret is ever in the Unity project.
 
 ### Inside the orchestrator
 
@@ -496,7 +496,7 @@ hackmit-2026/
     __main__.py  bridge.py  actor.py  director.py  tutor.py  protocol.py
     .env.example  requirements.txt
   scenarios/cafe_cancun/
-    scenario.yaml  menu.json  prompts/luis.md  prompts/mariana.md
+    scenario.yaml  menu.json  prompts/maria.md  prompts/luis.md
   worlds/cafe_cancun_v1/scene_manifest.json
   tools/mock_unity.py  tools/mock_orchestrator.py  tools/sample_es.wav
   eval/director_cases.jsonl  eval/run_eval.py
@@ -682,9 +682,9 @@ CafeScene
     MenuBoard                # world-space Canvas over the chalkboard
   Player                     # CharacterController + FirstPersonController + Camera + AudioListener
   NPCs
-    Luis                     # NpcController, Animator, AudioSource, PcmStreamPlayer, uLipSync
-      Anchors/CounterTop     # where served items appear
-    Mariana
+    Maria                    # NpcController, Animator, AudioSource, PcmStreamPlayer, uLipSync
+      Anchors/TableTop       # where served items appear
+    Luis
   Systems
     BridgeClient             # the WebSocket client and message router
     SceneActions             # executes tool calls: serve_order, show_bill
@@ -698,7 +698,7 @@ Import and alignment are in section 7. Runtime notes:
 
 - Reference numbers from the plugin README: 6.1M splats at Medium quality ran at 147 fps on an RTX 3080 Ti and 46 fps on an M1 Max. Our 2M-splat café should be comfortable on a recent MacBook Pro. If it is not, use the 500K PLY.
 - Splats ignore Unity lights and cast no shadows.
-- **Verify this in the first hour:** put a cube behind the counter and check that the splat counter hides the cube's lower half. Characters are ordinary opaque meshes, so they should be correctly occluded by nearer splats. If they are not, stand Luis in front of open floor instead of behind the counter.
+- **Verify this in the first hour:** put a cube behind the counter and check that the splat counter hides the cube's lower half. Characters are ordinary opaque meshes, so they should be correctly occluded by nearer splats. If they are not, stand Maria in front of open floor instead of behind the counter.
 - The chalkboard text is gibberish. `MenuBoard` is a world-space Canvas placed over it that lists the items from `menu.json`, with **no prices**. The learner has to ask.
 
 ### Player: a 40-line first-person controller
@@ -743,7 +743,7 @@ Ready Player Me is gone. Netflix acquired it and its avatar services [went offli
 
 Set each character's rig to Humanoid in the import settings. Download Mixamo clips "without skin", set those to Humanoid too, and they will play on the Rocketbox bodies. Clips to find on Mixamo: a standing idle, two talking loops, waving, head nod, head shake, laughing, thinking, shrugging, pointing, and a sitting idle.
 
-Pick a man of about 50 for Luis and a woman in her late twenties for Mariana. Luis stands behind the counter, which hides his legs and forgives foot sliding. For the first build Mariana stands by the window table. Seating an avatar on a chair that exists only in the splat is fiddly, so it is a stretch task.
+Pick a woman of about 40 for Maria and a man in his late twenties for Luis. Maria takes the order standing beside the table, and between visits she waits behind the counter, which hides her legs and forgives foot sliding. For the first build Luis stands by the window table. Seating an avatar on a chair that exists only in the splat is fiddly, so it is a stretch task.
 
 ### Making them look alive
 
@@ -841,8 +841,8 @@ NativeWebSocket hands every message over as a byte array and does not say whethe
 
 ### Scene actions and HUD
 
-- `serve_order`: for each `item_id`, spawn the matching prefab at `Luis/Anchors/CounterTop`, slide it forward over 0.6 s, and play a cup-on-wood sound. Coloured cylinders are fine for the first build.
-- `show_bill`: show a small receipt card in world space on the counter with the total.
+- `serve_order`: for each `item_id`, spawn the matching prefab at `Maria/Anchors/TableTop`, slide it forward over 0.6 s, and play a cup-on-wood sound. Coloured cylinders are fine for the first build.
+- `show_bill`: show a small receipt card in world space on the table with the total.
 - HUD goal list: four lines, top right, that tick when `goal.update` arrives. Small and quiet, so it does not break immersion.
 - State ring: a thin ring at the bottom of the screen. Green while the character is listening, pulsing while thinking, hidden while speaking. It tells the learner "it is your turn" without words.
 - Subtitles: hidden by default. Holding Tab shows the latest `caption` text and sends `hint` to the orchestrator, which counts it.
@@ -874,17 +874,17 @@ To save minutes while iterating on prompts, test in text-only mode. It bills per
 
 ### Create the agents
 
-Do this twice, once for Luis and once for Mariana. Follow the [quickstart](https://elevenlabs.io/docs/eleven-agents/quickstart.md): open the ElevenAgents dashboard, create a new agent, choose **Blank template**.
+Do this twice, once for Maria and once for Luis. Follow the [quickstart](https://elevenlabs.io/docs/eleven-agents/quickstart.md): open the ElevenAgents dashboard, create a new agent, choose **Blank template**.
 
 | Setting | Where | Value | Why |
 | --- | --- | --- | --- |
 | Language | Agent tab | Spanish (`es`). No additional languages. | Language is fixed for the call. English from the learner will transcribe badly, and the character reacts as if they did not catch it, which is what we want. |
-| First message | Agent tab | See prompts below | The character speaks first, like a real barista |
+| First message | Agent tab | See prompts below | The character speaks first, like a real waitress |
 | LLM | Agent tab | A small, fast OpenAI model from the dropdown to start, such as GPT-5.4 Mini or GPT-5.6 Luna. Lowest reasoning effort. Temperature about 0.7. | Thinking time delays every turn. The [client tools page](https://elevenlabs.io/docs/eleven-agents/customization/tools/client-tools.md) recommends stronger models for reliable tool parameters, so move up one size if tool calls misfire. |
 | Voice | Voice tab | A Mexican Spanish voice, see below |  |
 | TTS model | Voice tab | **V3 Conversational** with expressive mode on | [Expressive mode](https://elevenlabs.io/docs/eleven-agents/customization/voice/expressive-mode.md) gives emotional inflection and supports tags such as `[laughs]` and `[sighs]`. Same price. About 280 ms model latency. |
 | TTS fallback | Voice tab | Flash v2.5, about 75 ms | Use if time to first audio is over 1.5 s. Not Flash v2, which is English only. |
-| Stability, speed | Voice tab | Stability 0.40 to 0.50. Speed 1.0 for Mariana, 1.05 for Luis. | Lower stability is more emotional. [Voice design guidance](https://elevenlabs.io/docs/eleven-agents/customization/voice/best-practices/conversational-voice-design.md) puts natural speed at 0.9 to 1.1. |
+| Stability, speed | Voice tab | Stability 0.40 to 0.50. Speed 1.0 for Luis, 1.05 for Maria. | Lower stability is more emotional. [Voice design guidance](https://elevenlabs.io/docs/eleven-agents/customization/voice/best-practices/conversational-voice-design.md) puts natural speed at 0.9 to 1.1. |
 | Output audio format | Voice or Advanced tab | PCM 16000 Hz | Matches what the Python SDK and our Unity player expect |
 | Input audio format | Advanced tab | PCM 16000 Hz | Same |
 | ASR keywords | Advanced tab | `café de olla, horchata, jamaica, concha, chilaquiles, capuchino, pay de limón, americano, deslactosada` | Biases recognition toward menu words a learner will mispronounce |
@@ -893,7 +893,7 @@ Do this twice, once for Luis and once for Mariana. Follow the [quickstart](https
 | Soft timeout | Advanced tab | 2.0 s, message "Mmm, a ver..." | A spoken filler if the LLM is slow, instead of dead air |
 | Interruptions | Advanced tab | On | Barge-in is part of natural conversation |
 | Ignore terms | Advanced tab | `ajá, mhm, sí, ok, claro` | Backchannel noises should not stop the character mid-sentence |
-| Max duration | Advanced tab | 180 s for Luis, 300 s for Mariana | Hard caps from section 3 |
+| Max duration | Advanced tab | 180 s for Maria, 300 s for Luis | Hard caps from section 3 |
 | Client events | Advanced tab | Make sure `audio`, `interruption`, `user_transcript`, `agent_response`, `agent_response_correction`, `client_tool_call`, `ping` are on | The agent only sends event types that are enabled. The default list is not documented. |
 | Authentication | Security tab | Enabled (private agent) | The SDK fetches a signed URL with our API key. Keeps strangers off our minutes. |
 | Overrides | Security tab | Enable: first message, voice. Leave system prompt off. | Overrides are [off by default](https://elevenlabs.io/docs/eleven-agents/customization/personalization/overrides.md), and sending one that is not enabled throws an error. |
@@ -903,13 +903,13 @@ Field names and ranges are from the [conversation flow docs](https://elevenlabs.
 
 ### Picking the voices
 
-Open the Voice Library, filter Language to Spanish, then Accent to Mexican, then Category to Conversational. Shortlist three per character and audition each with a real line, not "hola". For Luis use: "¡Buenas tardes, joven! ¿Qué te doy? Tenemos café de olla recién hecho." Press + to add the winner to My Voices, then select it in the agent's Voice tab. We do not name specific voice ids here because they could not be verified.
+Open the Voice Library, filter Language to Spanish, then Accent to Mexican, then Category to Conversational. Maria needs a woman's voice and Luis a man's. Shortlist three per character and audition each with a real line, not "hola". For Maria use: "¡Buenas tardes, joven! ¿Qué te sirvo? Tenemos café de olla recién hecho." Press + to add the winner to My Voices, then select it in the agent's Voice tab. We do not name specific voice ids here because they could not be verified.
 
 V3 Conversational does not preserve Professional Voice Clone characteristics, so pick library voices, not clones.
 
 ### The menu as a knowledge base
 
-Create one document, `menu_cafe_nader.md`, at [Knowledge Base](https://elevenlabs.io/app/agents/knowledge-base), and attach it to Luis with usage mode **prompt**, not RAG. RAG adds about 250 ms per turn, and a menu this small belongs in the prompt. If the dashboard does not offer usage mode, paste the menu table at the bottom of the system prompt. Generate the file from `menu.json` so there is one source of truth.
+Create one document, `menu_cafe_nader.md`, at [Knowledge Base](https://elevenlabs.io/app/agents/knowledge-base), and attach it to Maria with usage mode **prompt**, not RAG. RAG adds about 250 ms per turn, and a menu this small belongs in the prompt. If the dashboard does not offer usage mode, paste the menu table at the bottom of the system prompt. Generate the file from `menu.json` so there is one source of truth.
 
 ```markdown
 # Menú de Café Nader (precios en pesos mexicanos)
@@ -928,38 +928,40 @@ Leche: entera, deslactosada o de avena (la de avena cuesta diez pesos más).
 
 Prices are written as words so the voice model never has to guess how to read "$45".
 
-### System prompt: Luis
+### System prompt: Maria
 
 The structure follows ElevenLabs' [prompting guide](https://elevenlabs.io/docs/eleven-agents/best-practices/prompting-guide): Personality, Environment, Tone, Goal, Guardrails, Tools. Instructions are in English because models follow them more reliably. The character's speech is Spanish only. Paste this verbatim.
 
 ```
 # Personality
-You are Luis, about fifty, owner and barista of Café Nader, a small neighbourhood
-café in downtown Cancún, Mexico. You are from Mérida and have run this café for
-twelve years. You are warm, quick and practical. You like your customers, you are
-proud of your café de olla, and you are usually a little busy.
+You are Maria, about forty, a waitress at Café Nader, a small neighbourhood
+café in downtown Cancún, Mexico. You are from Mérida and have worked at this café
+for years. You are warm, quick and practical. You like your customers, you are
+proud of the café de olla, and you are usually a little busy.
 
 # Environment
-It is about 5:30 pm. A customer, {{learner_name}}, has just walked up to your
-counter. You are behind the counter. The chalkboard behind you lists the items but
-not the prices. Customers order and pay at the counter, then sit down. This is a
-spoken, face-to-face conversation. The customer is a foreigner whose Spanish is
-intermediate. You treat them exactly like any other customer.
+It is about 5:30 pm. A customer, {{learner_name}}, has just walked in. Their friend
+is already waiting at the table by the window, so you greet them at the door, walk
+them over and take their order at the table. The chalkboard by the counter lists the
+items but not the prices. This is a spoken, face-to-face conversation. The customer
+is a foreigner whose Spanish is intermediate. You treat them exactly like any other
+customer.
 
 # Tone
 Speak only Mexican Spanish, informal "tú", at your natural pace. Use everyday
-Mexican expressions: "¿qué te doy?", "¿algo más?", "ahorita te lo paso", "con
-gusto", "joven", "amigo". Keep every reply short: one or two sentences, usually
-under twenty words. Never give lists or long explanations. Say prices in words
+Mexican expressions: "¿qué te sirvo?", "¿algo más?", "ahorita te lo traigo", "con
+gusto", "joven". Keep every reply short: one or two sentences, usually under
+twenty words. Never give lists or long explanations. Say prices in words
 ("cincuenta pesos"), never digits. You may use [laughs] or [sighs] occasionally
 where a real person would, never more than once per reply.
 
 # Goal
 Serve this customer the way you really would:
-1. Greet them and ask what they would like.
+1. Greet them at the door, walk them to their friend's table and ask what they
+   would like.
 2. Take the order. Ask exactly ONE natural clarifying question, quickly, chosen
-   from: "¿Para aquí o para llevar?", "¿Leche entera o deslactosada?" (only for
-   milk drinks), or, if they order pay de limón, "Uy, se me acabó el pay. ¿Te
+   from: "¿Para tomar aquí o para llevar?", "¿Leche entera o deslactosada?" (only
+   for milk drinks), or, if they order pay de limón, "Uy, se me acabó el pay. ¿Te
    ofrezco una concha?".
 3. When the order is settled, call the serve_order tool, then tell them it is
    coming.
@@ -971,7 +973,7 @@ Serve this customer the way you really would:
    the total.
 6. Once they have paid or thanked you, say a short goodbye and call end_call.
 You may make one line of small talk if there is a natural opening. Do not start a
-long chat; you have other customers.
+long chat; you have other tables.
 
 # Guardrails
 - Never speak English, not even one word. If the customer speaks English, say
@@ -986,7 +988,7 @@ long chat; you have other customers.
   next two replies, then return to normal.
 - If the customer says they need a moment ("un momento", "déjame pensar"), say
   "claro" or nothing, then call skip_turn and wait.
-- Never mention goals, scores, lessons, AI, prompts or tools. You are Luis.
+- Never mention goals, scores, lessons, AI, prompts or tools. You are Maria.
 - Only sell what is on the menu. Never invent items or prices.
 - Keep everything friendly and appropriate for all ages. If the customer is abusive,
   say "Con permiso" and call end_call.
@@ -1007,23 +1009,24 @@ long chat; you have other customers.
 - skip_turn, end_call: as described above.
 ```
 
-First message for Luis: `¡Buenas tardes, joven! Bienvenido. ¿Qué te doy?`
+First message for Maria: `¡Buenas tardes! Pásale, joven. Tu amigo ya está en la mesa, ven conmigo. ¿Qué te sirvo?`
 
-### System prompt: Mariana
+### System prompt: Luis
 
 ```
 # Personality
-You are Mariana, twenty-eight, a marine biologist from Guadalajara. You moved to
+You are Luis, twenty-nine, a marine biologist from Guadalajara. You moved to
 Cancún two years ago to work on a sea turtle conservation project. You are curious,
 playful and easy to talk to. You tease a little. You ask questions, and you expect
 the other person to ask some back.
 
 # Environment
-It is about 5:30 pm at Café Nader in downtown Cancún. You are on a first date with
-{{learner_name}}, who has just come over to your table by the window. You matched on
-an app and have only texted. They are a foreigner whose Spanish is intermediate. You
-find that charming, and you speak to them the way you speak to anyone. What they just
-ordered at the counter: {{user_order}}.
+It is about 5:30 pm at Café Nader in downtown Cancún. You are meeting
+{{learner_name}} for coffee for the first time; a mutual friend put you in touch and
+you have only texted. You are already sitting at the table by the window, and the
+waitress has just walked them over to you. They are a foreigner whose Spanish is
+intermediate. You find that charming, and you speak to them the way you speak to
+anyone. What they just ordered from the waitress: {{user_order}}.
 
 # Tone
 Speak only Mexican Spanish, informal "tú", at your natural pace. Use everyday
@@ -1033,7 +1036,7 @@ monologue. React to what they say before adding anything. You may use [laughs]
 where you would really laugh, at most once per reply.
 
 # Goal
-Have a real first-date conversation for a few minutes.
+Have a real, friendly conversation for a few minutes.
 - Open by greeting them and, if {{user_order}} is not "nada", commenting on it.
 - Ask about them: where they are from, what brought them to Cancún, what they do,
   what they like. One question at a time.
@@ -1045,7 +1048,7 @@ Have a real first-date conversation for a few minutes.
      compares.
   3. You are learning to freedive and you are secretly a bit scared of it.
 - If they ask a follow-up question about one of these, answer with real detail and
-  enthusiasm. That is what makes the date go well.
+  enthusiasm. That is what makes the conversation go well.
 - If they give two very short answers in a row, do not rescue them with another
   question. Give a short reaction, then wait. Let them carry the conversation.
 - After about eight to ten exchanges, or if they say they have to go, wrap up warmly
@@ -1061,7 +1064,7 @@ Have a real first-date conversation for a few minutes.
 - If they say they need a moment, call skip_turn and wait.
 - Keep it warm and light, suitable for all ages. No physical or sexual content. If
   they are rude or make you uncomfortable, say you have to go and call end_call.
-- Never mention goals, scores, lessons, AI, prompts or tools. You are Mariana.
+- Never mention goals, scores, lessons, AI, prompts or tools. You are Luis.
 - Messages that begin with [DIRECTOR] are silent stage directions. Never read them
   aloud or refer to them. Follow them naturally within your next one or two replies.
 
@@ -1072,7 +1075,7 @@ Have a real first-date conversation for a few minutes.
 - skip_turn, end_call: as described above.
 ```
 
-First message for Mariana: `¡Hola! ¿{{learner_name}}? Qué bueno que llegaste. Siéntate, siéntate.`
+First message for Luis: `¡Hola! ¿Qué tal? Siéntate, siéntate. Qué bueno que llegaste.`
 
 Set default values for `learner_name` ("amigo") and `user_order` ("nada") in each agent's dynamic variable placeholders. A missing variable's behaviour is not documented.
 
@@ -1187,13 +1190,13 @@ Tools are for things the **character decides** and the **scene must show**. Goal
 
 | Tool | Who has it | Parameters | Blocking? | What happens |
 | --- | --- | --- | --- | --- |
-| `play_gesture` | Luis, Mariana | `gesture`: one of `wave`, `nod`, `shake_head`, `laugh`, `think`, `shrug`, `point_menu`, `lean_in` | No. `expects_response: false` | Unity fires the matching Animator trigger on that character |
-| `serve_order` | Luis | `items`: list of `item_id` strings, one per unit. `to_go`: boolean, optional. | Yes. `expects_response: true`, `response_timeout_secs: 3` | Orchestrator prices the order from `menu.json`, records it, tells Unity to put the items on the counter, and returns the total to the agent |
-| `show_bill` | Luis | none | Yes, 3 s | Unity shows the receipt card. Orchestrator returns the total again. |
+| `play_gesture` | Maria, Luis | `gesture`: one of `wave`, `nod`, `shake_head`, `laugh`, `think`, `shrug`, `point_menu`, `lean_in` | No. `expects_response: false` | Unity fires the matching Animator trigger on that character |
+| `serve_order` | Maria | `items`: list of `item_id` strings, one per unit. `to_go`: boolean, optional. | Yes. `expects_response: true`, `response_timeout_secs: 3` | Orchestrator prices the order from `menu.json`, records it, tells Unity to put the items on the table, and returns the total to the agent |
+| `show_bill` | Maria | none | Yes, 3 s | Unity shows the receipt card. Orchestrator returns the total again. |
 
 Plus two system tools that need no code from us: `end_call` and `skip_turn`.
 
-"Blocking" means the agent's LLM waits for our result and reads it before speaking again. We use that for `serve_order` for one reason: the orchestrator does the arithmetic, so Luis never invents a total. Our handler returns in microseconds, because it does not wait for Unity.
+"Blocking" means the agent's LLM waits for our result and reads it before speaking again. We use that for `serve_order` for one reason: the orchestrator does the arithmetic, so Maria never invents a total. Our handler returns in microseconds, because it does not wait for Unity.
 
 For all three tools set pre-tool speech to `off`, so the agent does not say filler like "one moment" before a call that returns instantly. Leave interruption mode at `allow` and execution mode at `immediate`.
 
@@ -1204,7 +1207,7 @@ For all three tools set pre-tool speech to `off`, so the agent does not say fill
   "tool_config": {
     "type": "client",
     "name": "serve_order",
-    "description": "Place the customer's finished order on the counter. Call once, when the order is final. Returns the total price in pesos.",
+    "description": "Place the customer's finished order on the table. Call once, when the order is final. Returns the total price in pesos.",
     "expects_response": true,
     "response_timeout_secs": 3,
     "parameters": {
@@ -1321,11 +1324,11 @@ If the agent sends an id that is not on the menu, the handler returns a plain-la
 **Worked example: the learner orders.**
 
 ```json
-{"v":1,"type":"session.state","id":"o-000040","ts":1790000001000,"npc":"luis","state":"thinking"}
-{"v":1,"type":"tool.call","id":"o-000041","ts":1790000001450,"call_id":"tool_call_8f2a","npc":"luis",
+{"v":1,"type":"session.state","id":"o-000040","ts":1790000001000,"npc":"maria","state":"thinking"}
+{"v":1,"type":"tool.call","id":"o-000041","ts":1790000001450,"call_id":"tool_call_8f2a","npc":"maria",
  "name":"serve_order","params":{"items":["cafe_olla","concha"],"to_go":false,"total_mxn":80}}
-{"v":1,"type":"audio.begin","id":"o-000042","ts":1790000001900,"npc":"luis","sample_rate":16000}
-{"v":1,"type":"session.state","id":"o-000043","ts":1790000001901,"npc":"luis","state":"speaking"}
+{"v":1,"type":"audio.begin","id":"o-000042","ts":1790000001900,"npc":"maria","sample_rate":16000}
+{"v":1,"type":"session.state","id":"o-000043","ts":1790000001901,"npc":"maria","state":"speaking"}
 ```
 
 Then binary audio frames follow. Unity answers when the cup has landed:
@@ -1371,7 +1374,7 @@ The character acts, a separate director judges, and a tutor explains afterwards.
 
 The obvious design gives the character a `mark_goal_complete` tool. We rejected it for three reasons.
 
-1. **It makes the character robotic.** A barista who is also grading you talks like an examiner. The prompt fills with scoring rules and the persona thins out.
+1. **It makes the character robotic.** A waitress who is also grading you talks like an examiner. The prompt fills with scoring rules and the persona thins out.
 2. **It costs latency.** Every tool call is extra LLM output before the character can speak.
 3. **It is unreliable.** A small, fast voice model under time pressure forgets to call bookkeeping tools.
 
@@ -1436,9 +1439,9 @@ A language model alone will sometimes award a goal wrongly. Where a hard event e
 | --- | --- | --- |
 | G1 `order` | Learner used a request form with a menu item | `serve_order` was called within the next two actor turns |
 | G2 `ask_price` | Learner asked a price question | The question came before any `show_bill` that was triggered by the learner leaving |
-| G3 `curveball` | Learner answered the clarifying question | One of Luis's three curveball lines appears in his previous two turns |
-| G4 `small_talk` | Two or more full-clause self-statements | Three or more exchanges with Mariana |
-| G5 `follow_up` | Question refers to Mariana's content | The director must quote **both** the learner's question and the line of Mariana's it refers to. No quote, no goal. |
+| G3 `curveball` | Learner answered the clarifying question | One of Maria's three curveball lines appears in her previous two turns |
+| G4 `small_talk` | Two or more full-clause self-statements | Three or more exchanges with Luis |
+| G5 `follow_up` | Question refers to Luis's content | The director must quote **both** the learner's question and the line of Luis's it refers to. No quote, no goal. |
 | G6 `repair` | Learner used a Spanish repair phrase | none needed |
 
 A goal, once done, stays done.
@@ -1449,15 +1452,15 @@ The director can whisper to the actor with `conv.send_contextual_update("[DIRECT
 
 | Trigger | Note sent |
 | --- | --- |
-| `learner_state` is `stuck` for two turns with Luis | `[DIRECTOR] The customer seems stuck. Offer two options from the menu in one short sentence.` |
+| `learner_state` is `stuck` for two turns with Maria | `[DIRECTOR] The customer seems stuck. Offer two options from the menu in one short sentence.` |
 | `distressed`: repeated "no entiendo", long silences | `[DIRECTOR] Slow down and use simple words for your next three replies.` |
-| Five exchanges with Mariana and G5 still open | `[DIRECTOR] Briefly mention your night turtle patrols, then pause and let them respond.` |
+| Five exchanges with Luis and G5 still open | `[DIRECTOR] Briefly mention your night turtle patrols, then pause and let them respond.` |
 | Learner is doing very well, all core goals done early | `[DIRECTOR] They are comfortable. Speak a little faster and use more slang.` |
 | 40 s left before the cap | `[DIRECTOR] Wrap up naturally within your next two replies.` |
 
 This gives us adaptive difficulty with no visible machinery. The learner only experiences a person who noticed they were struggling.
 
-The director also carries memory between characters. When the Luis session ends, the order is stored. It is passed to Mariana as the `user_order` dynamic variable, so she can say "¿Qué pediste? Ah, café de olla, buena elección."
+The director also carries memory between characters. When the Maria session ends, the order is stored. It is passed to Luis as the `user_order` dynamic variable, so he can say "¿Qué pediste? Ah, café de olla, buena elección."
 
 ### Capturing mistakes honestly
 
@@ -1467,7 +1470,7 @@ Mistakes come from the same per-turn verdict and accumulate in run state. Three 
 - **Text cannot judge pronunciation.** We do not claim to. It is listed as future work.
 - **Never interrupt to correct.** Nothing the director finds is shown during the run except goal ticks.
 
-Stretch, if there is time: the orchestrator already has the raw mic audio. Save each learner turn as a WAV file. On the feedback screen, each fix gets two play buttons: "you" plays the learner's clip, and "Luis" plays the corrected sentence through ElevenLabs text-to-speech in the character's own voice. Hearing the difference is worth more than reading it, and it is a second, distinct use of the ElevenLabs API.
+Stretch, if there is time: the orchestrator already has the raw mic audio. Save each learner turn as a WAV file. On the feedback screen, each fix gets two play buttons: "you" plays the learner's clip, and "Maria" plays the corrected sentence through ElevenLabs text-to-speech in the character's own voice. Hearing the difference is worth more than reading it, and it is a second, distinct use of the ElevenLabs API.
 
 ### The tutor and the feedback report
 
@@ -1497,7 +1500,7 @@ When the run ends, `tutor.py` makes one call to the larger model with the full t
   "went_well": {"quote": "¿Por qué marcan las tortugas de noche?",
                 "note": "A real follow-up question, asked without hesitation."},
   "useful_phrases": [
-    {"es": "¿Me lo puedes repetir más despacio?", "when": "When Luis asked about the milk and you switched to English."}
+    {"es": "¿Me lo puedes repetir más despacio?", "when": "When Maria asked about the milk and you switched to English."}
   ],
   "counters": {"english_turns": 1, "hints": 0, "repair_phrases": 0},
   "next_run": "Same café. Try to recover in Spanish when you miss something."
@@ -1513,7 +1516,7 @@ Judges score technical complexity at 30%. These are the five things to point at.
 1. **Actor and director separation**, with out-of-band steering through contextual updates. Two models with different jobs, speeds and prompts, coordinated live.
 2. **Hybrid evidence** for goals: model judgement cross-checked against hard tool-call events.
 3. **Streaming voice with barge-in bridged into a game engine**: a custom audio interface, a binary-framed local protocol, and a flushable ring buffer driving spatial audio and lip-sync.
-4. **A measured director.** `eval/director_cases.jsonl` holds about 40 hand-labelled learner turns, including tricky negatives such as a bare "¿y tú?" or saying "sí" to Luis's suggestion. `eval/run_eval.py` reports precision and recall per goal. The number that matters most is false awards, which should be zero. Run it on every rubric change. This plays to the team's strength in evaluation, and it is a concrete Codex job.
+4. **A measured director.** `eval/director_cases.jsonl` holds about 40 hand-labelled learner turns, including tricky negatives such as a bare "¿y tú?" or saying "sí" to Maria's suggestion. `eval/run_eval.py` reports precision and recall per goal. The number that matters most is false awards, which should be zero. Run it on every rubric change. This plays to the team's strength in evaluation, and it is a concrete Codex job.
 5. **Scenarios as data**: world prompt, cast, goals, tools and rubric in one YAML file, with a world generated by API call.
 
 ### What it costs
@@ -1559,7 +1562,7 @@ Bring a wired headset with a boom mic for the demo. Test in the actual hall on S
 - **Patient eagerness, 8 s turn timeout.** Learners stop mid-sentence to search for a word. The agent must wait through that.
 - **Backchannels do not interrupt.** "Ajá", "mhm", "sí", "ok" and "claro" are on the ignore list, so agreeing while the character talks does not cut them off.
 - **Real interruptions stop the character within a frame.** ElevenLabs sends `interruption`, the SDK calls `interrupt()`, the orchestrator sends `audio.flush`, and Unity empties the ring buffer and drops the talking animation.
-- **After a barge-in, trust the correction.** ElevenLabs sends `agent_response_correction` with what the character actually got out before being cut off. The director and the captions must use the corrected text. Otherwise goal G5 could credit a follow-up about something Mariana never audibly said.
+- **After a barge-in, trust the correction.** ElevenLabs sends `agent_response_correction` with what the character actually got out before being cut off. The director and the captions must use the corrected text. Otherwise goal G5 could credit a follow-up about something Luis never audibly said.
 - **"Un momento" is respected.** The character calls `skip_turn` and stays quiet.
 
 ### Persona behaviours that read as human
@@ -1568,7 +1571,7 @@ Bring a wired headset with a boom mic for the demo. Test in the actual hall on S
 - Replies are one or two sentences. Long replies are the clearest "I am an AI" tell in voice.
 - The character reacts before asking: "¡Ah, de Boston! Qué frío, ¿no?" rather than firing the next question.
 - No teacher talk, ever: no praise for their Spanish, no corrections, no "¡muy bien!".
-- Each character withholds something, so the learner has to act: prices for Luis, conversational effort for Mariana.
+- Each character withholds something, so the learner has to act: prices for Maria, conversational effort for Luis.
 - Laughs and sighs through expressive tags, at most one per reply.
 - Eye contact, a gesture on most turns, and a talking animation that stops the instant the audio does.
 
@@ -1578,11 +1581,11 @@ Bring a wired headset with a boom mic for the demo. Test in the actual hall on S
 | --- | --- |
 | Learner says nothing after the greeting | At 8 s the character prompts again in character. After a second silence, the director sends the "offer two options" note. The session never ends abruptly on silence. |
 | Learner speaks English | The character did not catch it, says so in Spanish and rephrases once. The English counter goes up. |
-| Recognition garbles the order | Luis's prompt makes him confirm before serving: "¿Un café de olla y una concha, verdad?" |
+| Recognition garbles the order | Maria's prompt makes her confirm before serving: "¿Un café de olla y una concha, verdad?" |
 | Learner orders something not on the menu | "Uy, de eso no tengo", plus one suggestion. `serve_order` rejects unknown ids anyway. |
 | Learner walks away mid-conversation | `proximity.exit` after 1.5 s, then flush and end the session. The character does not shout after them. |
 | Learner comes back to the same character | A new session starts with no memory of the first. Known limitation. Mitigation if time allows: pass a one-line `visit_context` dynamic variable summarising the earlier visit. |
-| Learner goes to Mariana first | Fine. `user_order` is "nada" and she does not mention it. Goals have no required order. |
+| Learner goes to Luis first | Fine. `user_order` is "nada" and he does not mention it. Goals have no required order. |
 | Learner asks "are you an AI?" | The character stays in character and is puzzled by the question |
 | Learner is abusive | The character excuses themselves and calls `end_call` |
 | Time cap approaching | Director sends the wrap-up note 40 s before `max_duration_seconds` |
@@ -1613,8 +1616,8 @@ Criteria are quoted from the HackMIT 2026 Challenges doc in the project.
 
 | Criterion | What we build that answers it | Show it in the demo by |
 | --- | --- | --- |
-| **Agentic depth**: "beyond simple text-to-speech... autonomous agents that handle complex logic and real-time dialogue" | Two agents with distinct goals and withheld information. Client tools that change the scene. A director that steers them mid-conversation with contextual updates. Memory passed from one agent to the next. | Ordering, then Mariana commenting on what you ordered |
-| **Interaction design**: "low-latency response times and emotional inflection" | V3 Conversational with expressive tags. Patient turn-taking tuned for learners. Barge-in that stops speech within a frame. Body language that covers thinking time. Measured latency. | Interrupting Luis mid-sentence. Showing the latency numbers from the log. |
+| **Agentic depth**: "beyond simple text-to-speech... autonomous agents that handle complex logic and real-time dialogue" | Two agents with distinct goals and withheld information. Client tools that change the scene. A director that steers them mid-conversation with contextual updates. Memory passed from one agent to the next. | Ordering, then Luis commenting on what you ordered |
+| **Interaction design**: "low-latency response times and emotional inflection" | V3 Conversational with expressive tags. Patient turn-taking tuned for learners. Barge-in that stops speech within a frame. Body language that covers thinking time. Measured latency. | Interrupting Maria mid-sentence. Showing the latency numbers from the log. |
 | **Technical integration**: "multimodal implementations (Voice + Video) or clever prompt engineering for the Agent's personality" | Voice drives an embodied 3D character: spatial audio, lip-sync, gestures as tool calls. Prompts built on withholding and curveballs. | A close-up of a character speaking with lip-sync, and the prompt on a slide |
 | **Novelty**: "a use case we haven't seen before that solves a real-world problem" | Situated rehearsal inside a generated copy of a real place | The one-sentence answer from section 1 |
 
@@ -1673,12 +1676,12 @@ Build in stages where every stage ends with something you could show a judge. Af
 
 | Stage | Name | Voice lane | Unity lane | Marble lane | Exit test |
 | --- | --- | --- | --- | --- | --- |
-| 0 | Set up | ElevenLabs plan or booth credits. OpenAI credit form. Create the Luis agent with the prompt from section 9. `.env` in place. | Rename `My project` to `unity`. Add the three packages. Confirm the splat URP feature is on the renderer. | Standard plan or API key. Download one World Labs sample scene for the Unity lane. | Everyone can run their own tool |
-| 1 | Talking | Orchestrator with the SDK's default audio. Talk to Luis through headphones. `play_gesture` prints to the console. | Sample world imported, aligned, walkable with primitive colliders | First café drafts with `marble-1.0-draft` | **A full Spanish order, by voice, with barge-in working.** This alone is a demo. |
-| 2 | Connected | Bridge server, `protocol.py`, `mock_unity.py`. Proximity starts and ends sessions. Audio forwarded as binary frames. | `BridgeClient`, `PcmStreamPlayer`, proximity check on a capsule stand-in for Luis, built against `mock_orchestrator.py` | Final café with `marble-1.1`. Export. Write the manifest. | Walk up to a capsule, it greets you in Spanish from its position, and interrupting it cuts the audio |
-| 3 | Alive | `serve_order` and `show_bill` handlers with pricing. `session.state` broadcasts. Latency logging. | Café world in. Rocketbox Luis with idle, talk and gestures, eye contact, lip-sync. Cup appears on the counter. Menu board. | Clean the splat in SuperSplat. Help place anchors. Start the pano fallback scene. | Order a coffee from a lip-synced Luis in the real café and see it arrive |
+| 0 | Set up | ElevenLabs plan or booth credits. OpenAI credit form. Create the Maria agent with the prompt from section 9. `.env` in place. | Rename `My project` to `unity`. Add the three packages. Confirm the splat URP feature is on the renderer. | Standard plan or API key. Download one World Labs sample scene for the Unity lane. | Everyone can run their own tool |
+| 1 | Talking | Orchestrator with the SDK's default audio. Talk to Maria through headphones. `play_gesture` prints to the console. | Sample world imported, aligned, walkable with primitive colliders | First café drafts with `marble-1.0-draft` | **A full Spanish order, by voice, with barge-in working.** This alone is a demo. |
+| 2 | Connected | Bridge server, `protocol.py`, `mock_unity.py`. Proximity starts and ends sessions. Audio forwarded as binary frames. | `BridgeClient`, `PcmStreamPlayer`, proximity check on a capsule stand-in for Maria, built against `mock_orchestrator.py` | Final café with `marble-1.1`. Export. Write the manifest. | Walk up to a capsule, it greets you in Spanish from its position, and interrupting it cuts the audio |
+| 3 | Alive | `serve_order` and `show_bill` handlers with pricing. `session.state` broadcasts. Latency logging. | Café world in. Rocketbox Maria with idle, talk and gestures, eye contact, lip-sync. Cup appears on the table. Menu board. | Clean the splat in SuperSplat. Help place anchors. Start the pano fallback scene. | Order a coffee from a lip-synced Maria in the real café and see it arrive |
 | 4 | Scored | Director with structured outputs. `goal.update`. Tutor and `feedback.html`. | HUD goal list, state ring, subtitles on Tab, end card | Second world for a second scenario, if credits allow | Finish a run and read a correct feedback report |
-| 5 | Second character | Mariana agent. `user_order` hand-off. Director notes. Eval harness. | Mariana avatar and placement. Push-to-talk UI. | Lighting reference from the pano. Polish. | The full two-character run from section 3 |
+| 5 | Second character | Luis agent. `user_order` hand-off. Director notes. Eval harness. | Luis avatar and placement. Push-to-talk UI. | Lighting reference from the pano. Polish. | The full two-character run from section 3 |
 | 6 | Polish | Greeting variants. Custom LLM experiment. Audio replay in feedback. | Thinking poses, blob shadows, sound effects, a standalone build | Backup demo video capture | A stranger can play it without help |
 
 ### If we fall behind, cut in this order
@@ -1686,10 +1689,10 @@ Build in stages where every stage ends with something you could show a judge. Af
 1. Audio replay on the feedback screen.
 2. The Custom LLM experiment. Keep a built-in model.
 3. The collider GLB. Keep primitive colliders.
-4. A seated Mariana. Keep her standing.
+4. A seated Luis. Keep him standing.
 5. The feedback report inside Unity. Keep the HTML page.
 6. Lip-sync by uLipSync. Keep the volume-driven jaw.
-7. Mariana entirely. In that case use a "slow afternoon" variant of Luis's prompt: remove "you have other customers" and give him Mariana's three conversational hooks, so all four core goals still work with one character.
+7. Luis entirely. In that case use a "slow afternoon" variant of Maria's prompt: remove "you have other tables" and give her Luis's three conversational hooks, so all four core goals still work with one character.
 
 Never cut: barge-in, the proximity start, goal ticks, the feedback report. Those are the product.
 
@@ -1700,12 +1703,12 @@ Expo slots are 5 to 7 minutes. Plan about 2.5 minutes of live play inside a 5-mi
 | Time | What the judge sees | What it proves |
 | --- | --- | --- |
 | 0:00 | One line: "You can pass a Spanish quiz and still freeze at a counter. This is where you rehearse the counter." | The problem |
-| 0:15 | Walking into the café. Luis looks up and greets you. | Generated world, proximity trigger, eye contact |
-| 0:30 | Order. He fires the curveball fast. You answer. | Native speed, no hand-holding |
-| 0:55 | Interrupt him on purpose mid-sentence | Barge-in |
-| 1:05 | "¿Cuánto es?" The bill appears, the cup is on the counter, and two goals tick. | Tools change the scene. The director works. |
-| 1:20 | Walk to Mariana. She comments on your order. | Memory across agents |
-| 1:40 | She mentions the turtles. You ask why at night. The goal ticks. | Follow-up detection with evidence |
+| 0:15 | Walking into the café. Maria greets you at the door and walks you to the table. | Generated world, proximity trigger, eye contact |
+| 0:30 | Order. She fires the curveball fast. You answer. | Native speed, no hand-holding |
+| 0:55 | Interrupt her on purpose mid-sentence | Barge-in |
+| 1:05 | "¿Cuánto es?" The bill appears, the cup is on the table, and two goals tick. | Tools change the scene. The director works. |
+| 1:20 | Turn to Luis. He comments on your order. | Memory across agents |
+| 1:40 | He mentions the turtles. You ask why at night. The goal ticks. | Follow-up detection with evidence |
 | 2:10 | End the run. The feedback page opens. | The tutor. The learning value. |
 | 2:30 | One architecture slide, one line on OpenAI and Codex, one line on the platform | Depth |
 
@@ -1732,14 +1735,14 @@ Every risky piece has a fallback that keeps the conversation system untouched. B
 | Splat renders but runs too slowly | Under 30 fps on the demo laptop | 500K PLY, lower render scale, smaller window | Visual detail |
 | Collider GLB misaligned, or the player falls through | Walking through the counter | Primitive colliders. This is already the default. | None |
 | Marble output is ugly or the layout is wrong | Melted furniture, no clear counter | Re-prompt with a better reference image. Try Chisel to block out the counter and table. Use a World Labs sample café-like scene. | Credits |
-| Characters look wrong in the splat | Floating, wrongly lit, clipping | Blob shadow, one tuned light, stand them in open floor. Luis behind the counter hides most problems. | Little |
+| Characters look wrong in the splat | Floating, wrongly lit, clipping | Blob shadow, one tuned light, stand them in open floor. Maria behind the counter hides most problems. | Little |
 | uLipSync does not react to streamed audio | Mouth stays still | Volume-driven jaw blendshape from `PcmStreamPlayer` | 30 minutes |
 | Audio through Unity stutters or plays at the wrong pitch | Chipmunk or choppy voice | Resample in `Push`. If still bad, play audio from Python (stage 1 path) and send Unity only a loudness value for the jaw. | Spatial audio |
 | The Unity bridge client is flaky | Disconnects, lost messages | Swap NativeWebSocket for `System.Net.WebSockets.ClientWebSocket` on a background thread with a `ConcurrentQueue` drained in `Update` | 1 hour |
 | The ElevenLabs SDK blocks us | A missing event, a bug in the audio interface | Raw WebSocket in Python, using the message shapes in the [API reference](https://elevenlabs.io/docs/eleven-agents/api-reference/eleven-agents/websocket). About 150 lines. | 2 hours |
 | V3 Conversational is too slow or odd in Spanish | Over 1.5 s median latency, strange prosody | Flash v2.5 | Some expressiveness |
 | The agent self-interrupts or hears the hall | Replies cut off, phantom turns | `ptt` mic mode with a headset | Open-mic barge-in |
-| Client tools misfire | Wrong items, tools never called | A larger LLM for Luis. Simplify `items` to a string. As a last resort, the director infers the order from the transcript and triggers the scene action itself. | Latency or purity |
+| Client tools misfire | Wrong items, tools never called | A larger LLM for Maria. Simplify `items` to a string. As a last resort, the director infers the order from the transcript and triggers the scene action itself. | Latency or purity |
 | The director is slow or wrong | Late ticks, false awards | Ticks are cosmetic during the run. The tutor re-judges everything at the end with the bigger model. Tighten the rubric using the eval set. | None for correctness |
 | Venue internet fails | Everything stalls | Phone hotspot. If that fails, the backup video. | The live demo |
 | Unity as a whole is the problem | Still fighting the engine at the halfway point | The browser client: World Labs' [character controller template](https://docs.worldlabs.ai/api/interactive-world-examples.md) with Spark, connected to the same bridge. Characters through [TalkingHead](https://github.com/met4citizen/TalkingHead). | A rebuild of the front end only |
@@ -1751,7 +1754,7 @@ This keeps the photoreal place and every part of the conversation system. It giv
 1. Export the 360 pano from Marble: a 2560 by 1280 equirectangular PNG. Free-tier worlds cannot export, so this still needs the Standard plan or the API's `pano_url`.
 2. In Unity, import the PNG with Texture Shape 2D, no compression, max size 4096. Create a material with the shader `Skybox/Panoramic`, set Mapping to Latitude Longitude Layout, and assign it under Lighting, Environment, Skybox Material.
 3. Fix the player at the centre and allow look-around only. Moving the camera inside a skybox shows no parallax, and the illusion breaks at once.
-4. Add an invisible ground plane and place Luis 2 m in front of the camera, where the counter appears in the pano. Rotate the skybox until it lines up. Add the blob shadow.
+4. Add an invisible ground plane and place Maria 2 m in front of the camera, where the counter appears in the pano. Rotate the skybox until it lines up. Add the blob shadow.
 5. Replace the proximity trigger with "look at the character and press E". That sends the same `proximity.enter`. Nothing in the orchestrator changes.
 6. The pano is only about 7 pixels per degree, so it looks soft full-screen. Use a narrower field of view, about 50 degrees. Optionally upscale the PNG to 8192 wide with any image upscaler.
 
@@ -1770,8 +1773,8 @@ The honest pitch in that case: "you stand in the real place and talk" instead of
 ### Decisions for the team
 
 - [ ] **Who is the WebSocket server?** This doc recommends Python. If the Unity teammate has already built a C# server, keep it. Decide once, and then freeze section 10.
-- [ ] **One character or two for the first full demo?** This doc specifies two, with Luis built first. Confirm the team wants Mariana, or choose the single-character variant in section 14.
-- [ ] **Is the date's name and gender fixed or chosen by the learner?** The default is Mariana. A choice needs a second voice and avatar.
+- [ ] **One character or two for the first full demo?** This doc specifies two, with Maria built first. Confirm the team wants Luis, or choose the single-character variant in section 14.
+- [ ] **Is Luis's name and gender fixed or chosen by the learner?** The default is Luis. A choice needs a second voice and avatar.
 - [ ] **Marble app plan or API credits?** This doc recommends the $20 Standard plan. Who pays, and on which account?
 - [ ] **Which ElevenLabs plan?** Free is 15 minutes. Ask the booth for credits before buying.
 - [ ] **Where do the world files live?** Shared drive, or Git LFS if the PLY is small enough.

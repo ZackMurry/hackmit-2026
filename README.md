@@ -26,7 +26,7 @@ what comes back — speech recognition, the character and the voice are the serv
   order in `npcs.json`), and `scenario_id` is attached to every speech turn. The last generated
   id is remembered in PlayerPrefs so replaying doesn't regenerate.
 - NPC `id`s in `npcs.json` are the server's `npc_id`s and need a configured agent
-  (`AGENT_ID_LUIS`, `AGENT_ID_MARIANA`, …).
+  (`AGENT_ID_MARIA`, `AGENT_ID_LUIS`, …).
 
 Lines without server audio — greetings, and every reply when `serverUrl` is empty — are voiced
 with the prerecorded `tools/sample_es.mp3` (copied to `Assets/Resources/Audio/`), so the

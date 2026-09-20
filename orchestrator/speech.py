@@ -22,6 +22,11 @@ class SpeechInput:
     scenario: dict[str, Any] | None = None
     # Required for raw signed PCM16 little-endian mono; absent for containers.
     sample_rate: int | None = None
+    # Groups the conversations of one visit so a character can know what the learner
+    # ordered from another character. Defaults to the session when the client omits it.
+    run_id: str | None = None
+    # Addresses the learner by name in the scenario's prompts.
+    learner_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,9 @@ class SpeechOutput:
     sample_rate: int | None = None
     user_transcript: str | None = None
     agent_transcript: str | None = None
+    # Scene actions the character triggered this turn, in order. The game client
+    # plays them; the conversation never waits for it.
+    actions: tuple[dict[str, Any], ...] = ()
 
 
 class SpeechProvider(Protocol):
