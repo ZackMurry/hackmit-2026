@@ -1,5 +1,9 @@
 # Scenar.io API
 
+> **New in v1:** streaming replies, session pre-warm, mouth shapes, soundscape, hints, the
+> written report and measured latency. The full contract, with examples and the order to adopt
+> them in, is `docs/v1_modifications.md`. Everything below still works unchanged.
+
 Python 3.11+, managed with [uv](https://docs.astral.sh/uv/). Run from the repository root:
 
 ```sh

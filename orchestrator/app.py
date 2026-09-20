@@ -1,21 +1,26 @@
 import asyncio
 import base64
+import importlib
+import inspect
 import json
 import logging
 import os
+import wave
+import io
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 
 from .director import RUN_ID, Director, DirectorProvider, GoalStore, create_director_provider
 from .grading import (GraderProvider, OpenAIGrader, TranscriptStore, create_grader,
                       event_text, overall_grade, passed, rubric_goals)
 from .models import (GeneratedScenario, Grade, GradeRequest, GradeResponse,
                      ScenarioRequest, ScenarioResponse, SceneNote, TranscriptTurn)
+from .metrics import Metrics
 from .scene import ScenePack, default_pack_dir
 from .scenarios import OpenAIScenarios, ScenarioProvider, ScenarioStore
 from .speech import SpeechInputError, SpeechUnavailable, SUPPORTED_AUDIO_TYPES, SpeechInput, SpeechOutput, SpeechProvider, load_speech_provider
@@ -69,6 +74,21 @@ def create_app(*, speech: SpeechProvider | None = None,
         with suppress(Exception):
             pack = ScenePack.load(default_pack_dir())
 
+    audio_dir = Path(os.getenv("RUN_AUDIO_DIR", str(transcripts.directory.parent / "audio")))
+    metrics = Metrics()
+
+    def optional(module: str):
+        """A lane's module, if it is there. The voice path must keep working when the
+        coaching or ambience code is missing or fails to import."""
+        try:
+            return importlib.import_module(f".{module}", __package__)
+        except Exception as error:  # noqa: BLE001
+            logging.getLogger("orchestrator").warning("%s unavailable: %s", module,
+                                                      type(error).__name__)
+            return None
+
+    brain, ambience = optional("brain_routes"), optional("ambience")
+
     @asynccontextmanager
     async def lifespan(app):
         configured = scenarios
@@ -77,7 +97,32 @@ def create_app(*, speech: SpeechProvider | None = None,
         app.state.scenarios = configured
         app.state.grader = grader if grader is not None else create_grader()
         judge = director if director is not None else create_director_provider()
-        app.state.director = Director(judge, goals, transcripts, timeout) if judge else None
+        async def steer(run_id: str, npc_id: str, text: str):
+            # The director's stage direction rides the same channel as a scene note,
+            # so it reaches the character now and again if their conversation reopens.
+            if hasattr(app.state.speech, "note"):
+                await app.state.speech.note(run_id, npc_id, "director", text)
+
+        extra = {"on_note": steer} if "on_note" in inspect.signature(Director).parameters else {}
+        app.state.director = Director(judge, goals, transcripts, timeout, **extra) if judge else None
+        if judge is not None and hasattr(judge, "warm_up"):
+            # The first call with a new schema is slow; pay for it before anyone speaks.
+            warming = asyncio.create_task(judge.warm_up())
+            warming.add_done_callback(lambda task: task.cancelled() or task.exception())
+        app.state.transcripts, app.state.pack, app.state.scenario_store = transcripts, pack, store
+        app.state.metrics, app.state.audio_dir = metrics, audio_dir
+        # The coach (hints) and the tutor (written report) are optional: without an
+        # OpenAI key the café still talks, it just cannot explain itself afterwards.
+        app.state.feedback = app.state.coach = None
+        for name, module, factory in (("coach", "coach", "create_coach"),
+                                      ("feedback", "feedback", "create_feedback_service")):
+            loaded = optional(module) if brain is not None else None
+            with suppress(Exception):
+                setattr(app.state, name, getattr(loaded, factory)() if loaded else None)
+        if app.state.coach is not None and hasattr(app.state.coach, "warm_up"):
+            # A learner who asks for a hint is already lost; do not make the first one slow.
+            hinting = asyncio.create_task(app.state.coach.warm_up())
+            hinting.add_done_callback(lambda task: task.cancelled() or task.exception())
         app.state.speech = speech
         if speech is None and os.getenv("SPEECH_ADAPTER"):
             app.state.speech = load_speech_provider(os.environ["SPEECH_ADAPTER"])
@@ -86,6 +131,8 @@ def create_app(*, speech: SpeechProvider | None = None,
             app.state.speech = create_provider()
             if pack is not None and isinstance(app.state.speech, ElevenLabsSpeech):
                 app.state.speech.pack = pack  # one loaded pack, shared
+        if hasattr(app.state.speech, "on_timings"):
+            app.state.speech.on_timings = metrics.record
         try:
             yield
         finally:
@@ -95,10 +142,27 @@ def create_app(*, speech: SpeechProvider | None = None,
                 await app.state.grader.aclose()
             if app.state.director is not None:
                 await app.state.director.aclose()
+            for extra in (app.state.coach, app.state.feedback):
+                if extra is not None and hasattr(extra, "aclose"):
+                    with suppress(Exception):
+                        await extra.aclose()
             if app.state.speech is not None and hasattr(app.state.speech, "aclose"):
                 await app.state.speech.aclose()
 
-    app = FastAPI(title="Scenar.io API", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="Scenar.io API", version="0.2.0", lifespan=lifespan)
+    for module in (brain, ambience):
+        if module is not None and hasattr(module, "build_router"):
+            app.include_router(module.build_router())
+
+    @app.get("/v1/metrics")
+    async def latency():
+        """Median and 90th-percentile latency per stage, per character, since start.
+
+        `first_sound` is the one a learner feels: from the end of their upload to the
+        first audio frame of the reply. Warm turns only, when there are any.
+        """
+        return {"targets_ms": {"first_sound_p50": 1200, "first_sound_p90": 1800},
+                "characters": metrics.summary()}
 
     @app.get("/health")
     async def health():
@@ -325,26 +389,26 @@ def create_app(*, speech: SpeechProvider | None = None,
         await provider_call(provider.end_session(session_id), timeout)
         return Response(status_code=204)
 
-    @app.post("/v1/speech", openapi_extra={
-        "requestBody": {"required": True, "content": {media: {
-            "schema": {"type": "string", "format": "binary"}}
-            for media in sorted(SUPPORTED_AUDIO_TYPES)}}})
-    async def respond(request: Request, session_id: UUID,
-                      npc_id: str = Query(pattern=r"^[a-z][a-z0-9_]{0,63}$"),
-                      scenario_id: UUID | None = None,
-                      sample_rate: int | None = Query(default=None, ge=8000, le=48000),
-                      response_format: Literal["audio", "json"] = "audio",
-                      run_id: str | None = Query(default=None, max_length=64,
-                                                 pattern=r"^[A-Za-z0-9_-]+$"),
-                      learner_name: str | None = Query(default=None, max_length=60)):
-        media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
-        if media_type not in SUPPORTED_AUDIO_TYPES:
-            raise HTTPException(415, "Unsupported audio Content-Type")
-        if media_type == "audio/pcm" and sample_rate is None:
-            raise HTTPException(422, "Raw PCM requires sample_rate (PCM16 LE mono)")
-        audio = await read_limited(request, MAX_AUDIO_BYTES)
-        if not audio or (media_type == "audio/pcm" and len(audio) % 2):
-            raise HTTPException(422, "Audio must be nonempty; PCM16 must contain whole samples")
+    AUDIO_BODY = {"requestBody": {"required": True, "content": {media: {
+        "schema": {"type": "string", "format": "binary"}} for media in sorted(SUPPORTED_AUDIO_TYPES)}}}
+    RUN = Query(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    NPC = Query(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    LEVEL = Query(default=None, pattern=r"^(A1|A2|B1|B2)$")
+
+    async def parse_turn(request: Request, session_id, npc_id, scenario_id, sample_rate,
+                         run_id, learner_name, learner_level, interrupted_at_ms,
+                         need_audio: bool = True) -> SpeechInput:
+        """Everything that can be rejected before a provider is touched."""
+        media_type, audio = "audio/wav", b""
+        if need_audio:
+            media_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+            if media_type not in SUPPORTED_AUDIO_TYPES:
+                raise HTTPException(415, "Unsupported audio Content-Type")
+            if media_type == "audio/pcm" and sample_rate is None:
+                raise HTTPException(422, "Raw PCM requires sample_rate (PCM16 LE mono)")
+            audio = await read_limited(request, MAX_AUDIO_BYTES)
+            if not audio or (media_type == "audio/pcm" and len(audio) % 2):
+                raise HTTPException(422, "Audio must be nonempty; PCM16 must contain whole samples")
         context = None
         if scenario_id:
             saved = await get_scenario(scenario_id)
@@ -353,8 +417,94 @@ def create_app(*, speech: SpeechProvider | None = None,
             context = saved.scenario.model_dump()
         if app.state.speech is None:
             raise HTTPException(503, "Speech adapter is not configured")
-        turn = SpeechInput(audio, media_type, session_id, npc_id, scenario_id, context,
-                           sample_rate, run_id, learner_name)
+        return SpeechInput(audio, media_type, session_id, npc_id, scenario_id, context,
+                           sample_rate, run_id, learner_name, learner_level, interrupted_at_ms)
+
+    def keep_clip(run: str, turn: SpeechInput, heard: str, unsure, min_logprob):
+        """The learner's own voice, kept for the end-of-visit pronunciation pass."""
+        if not RUN_ID.match(run) or turn.media_type not in {"audio/wav", "audio/x-wav", "audio/pcm"}:
+            return
+        folder = audio_dir / run
+        folder.mkdir(parents=True, exist_ok=True)
+        index = len(list(folder.glob("turn_*.wav"))) + 1
+        if index > 200:
+            return
+        data = turn.audio
+        if turn.media_type == "audio/pcm":
+            buffer = io.BytesIO()
+            with wave.open(buffer, "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(turn.sample_rate)
+                out.writeframes(data)
+            data = buffer.getvalue()
+        (folder / f"turn_{index:03d}.wav").write_bytes(data)
+        (folder / f"turn_{index:03d}.json").write_text(json.dumps({
+            "text": heard, "npc_id": turn.npc_id, "low_confidence_words": list(unsure),
+            "min_logprob": min_logprob}, ensure_ascii=False), encoding="utf-8")
+
+    async def after_turn(turn: SpeechInput, heard, said, actions, unsure, min_logprob,
+                         previous_heard=None) -> list[str]:
+        """Record the evidence and wake the director. Best effort: none of this may
+        cost the learner the turn they just paid for."""
+        run = turn.run_id or str(turn.session_id)
+        record = []
+        if previous_heard is not None:
+            record.append(TranscriptTurn(role="event", npc_id=turn.npc_id, text=(
+                f"learner interrupted; of the previous reply they heard only: {previous_heard}")[:4000]))
+        if heard and heard.strip():
+            fields = {"role": "learner", "npc_id": turn.npc_id, "text": heard.strip()[:4000]}
+            if unsure and "low_confidence_words" in TranscriptTurn.model_fields:
+                fields["low_confidence_words"] = list(unsure)[:40]
+            record.append(TranscriptTurn(**fields))
+        if said and said.strip():
+            record.append(TranscriptTurn(role="npc", npc_id=turn.npc_id, text=said.strip()[:4000]))
+        record += [TranscriptTurn(role="event", npc_id=turn.npc_id, text=event_text(action))
+                   for action in actions]
+        with suppress(Exception):
+            await asyncio.to_thread(transcripts.append, run, record)
+        with suppress(Exception):
+            await asyncio.to_thread(keep_clip, run, turn, heard or "", unsure or (), min_logprob)
+        # The director reads the run back and ticks goals after the reply has gone
+        # out; the list returned here is therefore the state before this turn.
+        achieved: list[str] = []
+        if app.state.director is not None and any(t.role == "learner" for t in record):
+            with suppress(Exception):
+                rubric = await rubric_for(turn.scenario_id)
+                achieved = [g["id"] for g in (await app.state.director.status(run, rubric))["goals"]
+                            if g["achieved"]]
+                app.state.director.schedule(run, rubric)
+        return achieved
+
+    @app.post("/v1/speech/sessions/{session_id}/warm", status_code=204)
+    async def warm(request: Request, session_id: UUID, npc_id: str = NPC,
+                   scenario_id: UUID | None = None, run_id: str | None = RUN,
+                   learner_name: str | None = Query(default=None, max_length=60),
+                   learner_level: str | None = LEVEL):
+        """Open the character's conversation before the learner speaks.
+
+        Call this when the player walks up, while the greeting plays. The first real
+        turn then costs the same as every other one instead of also paying to connect.
+        Safe to repeat; a warm session is left alone.
+        """
+        turn = await parse_turn(request, session_id, npc_id, scenario_id, None, run_id,
+                                learner_name, learner_level, None, need_audio=False)
+        if not hasattr(app.state.speech, "warm"):
+            raise HTTPException(501, "Speech adapter cannot pre-warm sessions")
+        await provider_call(app.state.speech.warm(turn), timeout)
+        return Response(status_code=204)
+
+    @app.post("/v1/speech", openapi_extra=AUDIO_BODY)
+    async def respond(request: Request, session_id: UUID, npc_id: str = NPC,
+                      scenario_id: UUID | None = None,
+                      sample_rate: int | None = Query(default=None, ge=8000, le=48000),
+                      response_format: Literal["audio", "json"] = "audio",
+                      run_id: str | None = RUN,
+                      learner_name: str | None = Query(default=None, max_length=60),
+                      learner_level: str | None = LEVEL,
+                      interrupted_at_ms: int | None = Query(default=None, ge=0, le=600000)):
+        turn = await parse_turn(request, session_id, npc_id, scenario_id, sample_rate, run_id,
+                                learner_name, learner_level, interrupted_at_ms)
 
         async def validated():
             result = await app.state.speech.respond(turn)
@@ -371,30 +521,15 @@ def create_app(*, speech: SpeechProvider | None = None,
 
         output = await provider_call(validated(), timeout)
         actions = [a for a in output.actions if isinstance(a, dict)]
-        # Grading evidence, kept off to the side: what each side said, and what the
-        # character actually did. Best effort — a failed write must never cost the
-        # learner the turn they just paid for.
-        record = [TranscriptTurn(role=role, npc_id=npc_id, text=text.strip()[:4000])
-                  for role, text in (("learner", output.user_transcript),
-                                     ("npc", output.agent_transcript))
-                  if text and text.strip()]
-        record += [TranscriptTurn(role="event", npc_id=npc_id, text=event_text(action))
-                   for action in actions]
-        run = run_id or str(session_id)
-        with suppress(Exception):
-            await asyncio.to_thread(transcripts.append, run, record)
-        # The director reads the run back and ticks goals after the reply has gone
-        # out; `goals_achieved` below is therefore the state before this turn.
-        achieved: list[str] = []
-        if app.state.director is not None and any(t.role == "learner" for t in record):
-            with suppress(Exception):
-                rubric = await rubric_for(scenario_id)
-                achieved = [g["id"] for g in (await app.state.director.status(run, rubric))["goals"]
-                            if g["achieved"]]
-                app.state.director.schedule(run, rubric)
+        achieved = await after_turn(turn, output.user_transcript, output.agent_transcript,
+                                    actions, output.low_confidence_words, output.min_logprob,
+                                    output.previous_reply_heard)
         headers = {"X-Session-ID": str(session_id), "Cache-Control": "no-store"}
         if output.sample_rate is not None:
             headers["X-Audio-Sample-Rate"] = str(output.sample_rate)
+        if output.timings_ms:
+            headers["Server-Timing"] = ", ".join(
+                f"{stage};dur={ms}" for stage, ms in output.timings_ms.items())
         if response_format == "json":
             return JSONResponse({"session_id": str(session_id), "npc_id": npc_id,
                 "audio_base64": base64.b64encode(output.audio).decode("ascii"),
@@ -402,7 +537,12 @@ def create_app(*, speech: SpeechProvider | None = None,
                 "user_transcript": output.user_transcript,
                 "agent_transcript": output.agent_transcript,
                 "actions": actions,
-                "goals_achieved": achieved},
+                "goals_achieved": achieved,
+                "visemes": list(output.visemes),
+                "low_confidence_words": list(output.low_confidence_words),
+                "timings_ms": output.timings_ms,
+                "ended": output.ended,
+                "previous_reply_heard": output.previous_reply_heard},
                 headers=headers)
         # Raw-audio callers still need the scene actions, and a header is the only
         # place left to put them. Skipped entirely if it would be unreasonably large.
@@ -411,6 +551,71 @@ def create_app(*, speech: SpeechProvider | None = None,
             if len(encoded) <= 2000:
                 headers["X-Scene-Actions"] = encoded
         return Response(output.audio, media_type=output.media_type, headers=headers)
+
+    @app.post("/v1/speech/stream", openapi_extra=AUDIO_BODY)
+    async def respond_stream(request: Request, session_id: UUID, npc_id: str = NPC,
+                             scenario_id: UUID | None = None,
+                             sample_rate: int | None = Query(default=None, ge=8000, le=48000),
+                             run_id: str | None = RUN,
+                             learner_name: str | None = Query(default=None, max_length=60),
+                             learner_level: str | None = LEVEL,
+                             interrupted_at_ms: int | None = Query(default=None, ge=0, le=600000)):
+        """The same turn as `/v1/speech`, delivered as it happens.
+
+        Newline-delimited JSON, one event per line, flushed immediately: `transcript`,
+        then `audio` frames (base64 PCM16 mono with their mouth shapes) interleaved
+        with `text` and `action`, then `done`. Play each audio frame as it arrives:
+        the learner hears the character about a second after they stop talking.
+        """
+        turn = await parse_turn(request, session_id, npc_id, scenario_id, sample_rate, run_id,
+                                learner_name, learner_level, interrupted_at_ms)
+        if not hasattr(app.state.speech, "stream"):
+            raise HTTPException(501, "Speech adapter cannot stream")
+        events = app.state.speech.stream(turn)
+        # Anything that fails before the first event is an ordinary HTTP error; after
+        # that the status line has gone, so failures travel as an `error` event.
+        first = await provider_call(anext(events), timeout)
+
+        def line(event: dict) -> bytes:
+            return (json.dumps(event, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+        async def body():
+            heard = said = ""
+            unsure, min_logprob, actions = (), None, []
+            try:
+                async with asyncio.timeout(timeout):
+                    pending = first
+                    while pending is not None:
+                        event, kind = pending, pending["type"]
+                        if kind == "transcript":
+                            heard, unsure = event["text"], event["low_confidence_words"]
+                            min_logprob = event.get("min_logprob")
+                        elif kind == "audio":
+                            event = {**event, "pcm_base64": base64.b64encode(event["pcm"]).decode("ascii")}
+                            del event["pcm"]
+                        elif kind == "text":
+                            said = event["text"]
+                        elif kind == "action":
+                            actions.append(event["action"])
+                        elif kind == "done":
+                            event = {**event, "session_id": str(session_id), "npc_id": npc_id,
+                                     "goals_achieved": await after_turn(
+                                         turn, heard, said, actions, unsure, min_logprob,
+                                         event.get("previous_reply_heard"))}
+                        yield line(event)
+                        pending = await anext(events, None)
+            except (TimeoutError, Exception) as error:  # noqa: BLE001
+                logging.getLogger("orchestrator").warning("Stream failed: %s", type(error).__name__)
+                detail = str(error) if isinstance(error, (SpeechInputError, SpeechUnavailable)) \
+                    else "Provider failed or timed out"
+                yield line({"type": "error", "detail": detail})
+            finally:
+                with suppress(Exception):
+                    await events.aclose()
+
+        return StreamingResponse(body(), media_type="application/x-ndjson", headers={
+            "X-Session-ID": str(session_id), "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no"})
 
     return app
 

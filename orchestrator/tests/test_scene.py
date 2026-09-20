@@ -48,14 +48,16 @@ def test_pack_loads_and_injects_the_menu(pack):
     assert "cincuenta pesos" in pack.prompts["maria"]
     # Every dynamic variable the prompts use must be one the adapter always sends.
     for text in pack.prompts.values():
-        for token in ("{{learner_name}}", "{{user_order}}"):
-            assert token in text or True  # presence is optional, unknown ones are not
-        assert "{{" not in text.replace("{{learner_name}}", "").replace("{{user_order}}", "")
+        for token in ("{{learner_name}}", "{{user_order}}", "{{learner_level}}"):
+            text = text.replace(token, "")  # presence is optional, unknown ones are not
+        assert "{{" not in text
 
 
 def test_only_maria_can_take_an_order(pack):
-    assert set(pack.npcs["maria"].tools) == {"serve_order", "show_bill", "play_gesture"}
-    assert pack.npcs["luis"].tools == ["play_gesture"]
+    # No play_gesture: a tool call is a second LLM generation, and a nod on every
+    # reply cost about a second of first-audio. Gestures are inferred server-side.
+    assert set(pack.npcs["maria"].tools) == {"serve_order", "show_bill"}
+    assert pack.npcs["luis"].tools == []
 
 
 def test_voices_match_each_character_gender(pack):
@@ -195,7 +197,7 @@ def test_npcs_endpoint_describes_the_cast():
     assert set(by_id) == {"maria", "luis"}
     assert by_id["maria"]["greeting"].startswith("¡Buenas tardes!")
     assert "serve_order" in by_id["maria"]["actions"]
-    assert by_id["luis"]["actions"] == ["play_gesture"]
+    assert "serve_order" not in by_id["luis"]["actions"]   # only the waitress serves
     assert by_id["maria"]["ready"] is False        # no agent configured in tests
     assert len(body["menu"]) == 10
     assert [g["id"] for g in body["goals"]] == ["introduce", "hometown", "order"]
@@ -230,3 +232,46 @@ def test_npcs_endpoint_exposes_aliases():
         body = client.get("/v1/npcs").json()
     maria = next(n for n in body["npcs"] if n["npc_id"] == "maria")
     assert "mariana" in maria["aliases"]
+
+
+# ---------------------------------------------------------------- sound and voice data
+
+def test_scene_actions_carry_their_sound_effect(pack):
+    state = RunState()
+    served = pack.dispatch("maria", "serve_order", {"items": ["cafe_olla"]}, state)
+    assert served.action["sfx"] == "/v1/ambience/cup_on_table"
+    billed = pack.dispatch("maria", "show_bill", {}, state)
+    assert billed.action["sfx"] == "/v1/ambience/receipt"
+
+
+def test_repeat_order_and_unmapped_tools_make_no_sound(pack):
+    """The cup is set down once. A repeat has no action, so it has nothing to carry."""
+    state = RunState()
+    pack.dispatch("maria", "serve_order", {"items": ["concha"]}, state)
+    again = pack.dispatch("maria", "serve_order", {"items": ["concha"]}, state)
+    assert again.action is None
+    gesture = pack.dispatch("luis", "play_gesture", {"gesture": "nod"}, state)
+    assert "sfx" not in gesture.action
+
+
+def test_action_sfx_must_name_a_declared_sound(pack):
+    from orchestrator.scene import ScenarioFile
+    data = pack.scenario.model_dump()
+    data["action_sfx"] = {"serve_order": "foghorn"}
+    with pytest.raises(ValueError, match="unknown ambience id"):
+        ScenarioFile.model_validate(data)
+
+
+def test_ambience_path_only_resolves_declared_ids(pack):
+    assert pack.ambience_path("ocean_loop").name == "ocean_loop.mp3"
+    assert pack.ambience_path("../menu.json") is None
+    assert pack.ambience_path("ocean_loop.mp3") is None
+
+
+def test_every_character_can_slow_down_in_its_own_voice(pack):
+    """<despacio> is a multi-voice label; it must exist or the tag is read aloud."""
+    for npc in pack.npcs.values():
+        labels = {v.label: v for v in npc.supported_voices}
+        assert "despacio" in labels and labels["despacio"].speed < npc.tts.speed
+        assert "<despacio>" in pack.prompts[npc.npc_id]
+

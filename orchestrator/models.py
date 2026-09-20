@@ -97,6 +97,9 @@ class TranscriptTurn(Model):
     role: Literal["learner", "npc", "event"]
     npc_id: Identifier
     text: Text
+    # Learner turns only: words the speech recogniser was unsure of. A "mistake" made of
+    # these words may be ours, not the learner's, so it is never shown to them.
+    low_confidence_words: Annotated[list[str], Field(max_length=40)] = []
 
 
 class GradeRequest(Model):
@@ -125,10 +128,37 @@ class GoalTick(Model):
     evidence_quote: Text
 
 
+MistakeCategory = Literal["gender_agreement", "verb_conjugation", "tense", "ser_estar",
+                          "por_para", "word_choice", "word_order", "register",
+                          "false_friend", "english_fallback", "other"]
+LearnerState = Literal["fine", "hesitant", "stuck", "distressed"]
+
+
+class Mistake(Model):
+    """Something the learner said that a native speaker would say differently. Logged
+    silently during the visit; only the feedback report ever shows it."""
+
+    quote: Text
+    correction: Text
+    category: MistakeCategory = "other"
+    explanation_en: Text
+    severity: Annotated[int, Field(ge=1, le=3)] = 1
+    # Set in code, never by the model: the quote overlaps words the recogniser doubted.
+    asr_suspect: bool = False
+
+
 class Verdict(Model):
-    """What the director returns after a turn: the open goals now met, if any."""
+    """What the director returns after a turn. `achieved` stays first so it is
+    generated first; everything after it has a default, so a provider that only
+    judges goals is still a valid director."""
 
     achieved: Annotated[list[GoalTick], Field(max_length=12)]
+    mistakes: Annotated[list[Mistake], Field(max_length=12)] = []
+    used_english: bool = False
+    used_repair_phrase: bool = False
+    learner_state: LearnerState = "fine"
+    # One silent stage direction for the character the learner is talking to, or None.
+    director_note: Annotated[str, Field(max_length=1000)] | None = None
 
 
 # The scale the client prints. Ordered worst to best; grading.py turns it into points.
@@ -163,3 +193,89 @@ class GradeResponse(Grade):
     run_id: str | None = None
     goals_passed: int
     goals_total: int
+
+
+# --------------------------------------------------------------------------- coaching
+
+RunId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+Level = Literal["A1", "A2", "B1", "B2"]
+
+
+class HintRequest(Model):
+    run_id: RunId
+    npc_id: Identifier
+    level: Level | None = None
+
+
+class Suggestion(Model):
+    es: Text
+    en: Text
+
+
+class Hint(Model):
+    """Help the learner asked for: what was just said, and things they could say next."""
+
+    meaning_en: Text
+    suggestions: Annotated[list[Suggestion], Field(min_length=1, max_length=3)]
+    tip: Text
+
+
+class FeedbackRequest(Model):
+    run_id: RunId
+    scenario_id: UUID | None = None
+
+
+class Fix(Model):
+    heard: Text
+    better: Text
+    why_en: Text
+    category: MistakeCategory = "other"
+
+
+class UsefulPhrase(Model):
+    es: Text
+    en: Text
+    when: Text
+
+
+class WentWell(Model):
+    quote: Text
+    note: Text
+
+
+class ReportGoal(Model):
+    id: GoalId
+    label: Text
+    done: bool
+    evidence: Text | None = None
+
+
+class PronunciationImpression(Model):
+    turn: int
+    heard: Text
+    problem_words: Annotated[list[str], Field(max_length=5)]
+    impression: Text
+
+
+class Pronunciation(Model):
+    impressions: list[PronunciationImpression]
+    disclaimer: Text
+
+
+class FeedbackReport(Model):
+    """The page the learner reads after the visit: what to say differently, never a
+    lecture. Every quote in it was checked against what the learner actually said."""
+
+    run_id: str
+    result: Literal["pass", "partial", "retry"]
+    stars: Annotated[int, Field(ge=0, le=3)]
+    goals: list[ReportGoal]
+    fixes: Annotated[list[Fix], Field(max_length=3)]
+    useful_phrases: Annotated[list[UsefulPhrase], Field(max_length=3)]
+    went_well: WentWell | None
+    practice_words: Annotated[list[str], Field(max_length=8)]
+    pronunciation: Pronunciation | None
+    counters: dict[str, int]
+    next_visit: Text
+    summary: Text
+    html_path: str | None = None

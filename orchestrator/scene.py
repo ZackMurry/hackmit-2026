@@ -94,6 +94,37 @@ class TurnSpec(Model):
     timeout: Annotated[float, Field(ge=1, le=30)] = 8
 
 
+class SupportedVoiceSpec(Model):
+    """A second way of speaking the character can switch into with ``<label>…</label>``.
+
+    ElevenLabs calls these multi-voice labels. We use one not for a different voice but
+    for the SAME voice at a slower speed: the agent-wide ``speed`` is fixed per agent,
+    so this is the only way a character can honour "más despacio, por favor" for one
+    sentence and then go back to a natural pace. ``voice_id`` defaults to the
+    character's own voice so a scenario author cannot mismatch them by accident.
+    """
+
+    label: Identifier
+    description: str
+    voice_id: str | None = None
+    language: str | None = None
+    speed: Annotated[float, Field(ge=0.7, le=1.2)] = 0.78
+    stability: Annotated[float, Field(ge=0.0, le=1.0)] | None = None
+
+
+class SoftTimeoutSpec(Model):
+    """A spoken filler for when the character's LLM is slow to start.
+
+    A real person says "mmm, a ver…" while thinking; dead air reads as a broken app.
+    The message is static on purpose: an LLM-generated filler costs a second model call
+    exactly when the first one is already slow.
+    """
+
+    timeout_seconds: Annotated[float, Field(ge=-1, le=30)] = 1.5
+    message: Annotated[str, Field(min_length=1, max_length=200)] = "Mmm, a ver..."
+    use_llm_generated_message: bool = False
+
+
 class NpcSpec(Model):
     npc_id: Identifier
     # Other ids a client may already be sending for this character. Lets a game
@@ -104,11 +135,20 @@ class NpcSpec(Model):
     gender: Literal["female", "male", "other"]
     voice_id: str
     voice_name: str | None = None
+    # Public owner id of a Voice Library voice. An agent 404s on a library voice until
+    # it has been added to that account's My Voices, and adding needs the owner's id;
+    # tools/switch_account.py reads it from here when moving to a spare account.
+    voice_library_owner_id: str | None = None
     prompt_file: str
     first_message: str
     tools: list[Identifier] = []
     max_duration_seconds: Annotated[int, Field(ge=30, le=1800)] = 300
     tts: TtsSpec = TtsSpec()
+    # Flash is the default because first audio is ~4x faster; "v3" is the measured
+    # per-character A/B from the build doc and is applied by PATCH after creation.
+    # Unset means "whatever the provisioner's --tts flag says".
+    tts_model: Literal["flash", "v3"] | None = None
+    supported_voices: list[SupportedVoiceSpec] = []
     turn: TurnSpec = TurnSpec()
 
 
@@ -125,7 +165,37 @@ class ToolSpec(Model):
     description: str
     expects_response: bool = False
     response_timeout_secs: Annotated[int, Field(ge=1, le=120)] = 3
+    # Whether the character speaks BEFORE the tool runs. A tool turn is two LLM round
+    # trips (the call, then the speech), so with "off" first audio waits for both:
+    # measured 1.65 s against 0.75 s for a plain reply. "force" makes her say a line in
+    # the same generation as the call and brought that to 0.94 s. "auto" was measured
+    # too and never spoke early. BUT a forced line makes one reply arrive as two
+    # agent_response events with the tool between them, and a turn-based client that
+    # stops at the first one delivers the second half as the answer to the NEXT
+    # question (seen live: "¿Cuánto es todo?" answered with only "A ver, déjame ver").
+    # Use "force" only once the adapter keeps a turn open across a tool call.
+    pre_tool_speech: Literal["auto", "force", "off"] = "off"
     parameters: dict[str, Any] = {}
+
+
+class AmbienceSpec(Model):
+    """One generated sound: a looping bed or a one-shot tied to a scene action.
+
+    ``prompt`` and ``duration_seconds`` drive ``tools/make_ambience.py``; the rest is
+    mixing guidance the game client reads from ``GET /v1/ambience``. Files are
+    generated once and committed, never at runtime.
+    """
+
+    id: Identifier
+    file: Annotated[str, Field(pattern=r"^[A-Za-z0-9_\-]+\.mp3$")]
+    prompt: str
+    duration_seconds: Annotated[float, Field(ge=0.5, le=30)]
+    loop: bool = False
+    prompt_influence: Annotated[float, Field(ge=0.0, le=1.0)] = 0.3
+    volume: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+    # How far the client should duck this sound while anyone is speaking. Negative dB.
+    duck_db: Annotated[float, Field(ge=-60, le=0)] = 0.0
+    spatial: bool = False
 
 
 class ScenarioFile(Model):
@@ -141,6 +211,10 @@ class ScenarioFile(Model):
     gestures: list[str] = []
     goals: list[GoalSpec] = []
     tools: dict[Identifier, ToolSpec] = {}
+    soft_timeout: SoftTimeoutSpec | None = None
+    ambience: list[AmbienceSpec] = []
+    # tool name -> ambience id of the one-shot the client plays when that action fires.
+    action_sfx: dict[Identifier, Identifier] = {}
 
     @model_validator(mode="after")
     def _references(self):
@@ -158,6 +232,12 @@ class ScenarioFile(Model):
         for goal in self.goals:
             if goal.npc_id not in known:
                 raise ValueError(f"Goal {goal.id} references unknown npc {goal.npc_id}")
+        sounds = [a.id for a in self.ambience]
+        if len(set(sounds)) != len(sounds):
+            raise ValueError("Duplicate ambience id in scenario")
+        for tool, sound in self.action_sfx.items():
+            if sound not in sounds:
+                raise ValueError(f"action_sfx for {tool} names unknown ambience id {sound!r}")
         return self
 
 
@@ -250,6 +330,23 @@ class ScenePack:
             lines.append(f"- {item.name_es}: {price}{suffix}")
         return "\n".join(lines)
 
+    # -- ambience ---------------------------------------------------------------
+
+    @staticmethod
+    def ambience_url(sound_id: str) -> str:
+        return f"/v1/ambience/{sound_id}"
+
+    def ambience_path(self, sound_id: str) -> Path | None:
+        """The file behind an ambience id, or None if the id is not in the scenario.
+
+        The id is looked up in the scenario's own list and the filename comes from
+        there, never from the caller, so a request cannot walk out of the pack.
+        """
+        for sound in self.scenario.ambience:
+            if sound.id == sound_id:
+                return (self.root or default_pack_dir()) / "ambience" / sound.file
+        return None
+
     # -- pricing ----------------------------------------------------------------
 
     def price(self, item_ids: list[str]) -> int:
@@ -273,7 +370,13 @@ class ScenePack:
             if handler is None:
                 return ToolOutcome(result=f"Unknown tool '{tool}'. Continue the "
                                           f"conversation without it.", is_error=True)
-            return handler(npc_id, params, state)
+            outcome = handler(npc_id, params, state)
+            sound = self.scenario.action_sfx.get(tool)
+            if outcome.action is not None and sound:
+                # Only a call that really changed the scene carries a sound: a repeated
+                # serve_order has no action, so the cup is not set down twice.
+                outcome.action["sfx"] = self.ambience_url(sound)
+            return outcome
         except Exception:  # a tool must never take the conversation down with it
             return ToolOutcome(result="That did not work. Carry on naturally.", is_error=True)
 

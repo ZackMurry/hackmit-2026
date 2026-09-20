@@ -4,7 +4,7 @@
 
 2026-09-19 · @Someone
 
-> **Building today? Start at section 18.** It records what is actually built, what this plan lacked, and the exact components still to build. Where it disagrees with sections 5, 10 or 14, section 18 wins.
+> **Building today? Start at section 18**, then `docs/v1_modifications.md`. Section 18 records what is actually built, what this plan lacked and why each component exists; section 18.11 is the state after the build of 2026-09-20; the v1 document is the contract the Unity client codes against. Where it disagrees with sections 5, 10 or 14, section 18 wins.
 
 ## 0. How to read this doc
 
@@ -2156,3 +2156,44 @@ Every lane ends by running `uv run pytest`, then `tools/e2e_check.py` against li
 - Whether `service_tier="fast"` measurably helps `gpt-5.6-luna`.
 - The Scribe confidence threshold that best separates a mispronounced word from noise.
 - ElevenLabs minutes: four free accounts give about 55 minutes. Rehearsal and the expo need more in one place; buy Starter on one account the day before.
+
+### 18.11 Built, 2026-09-20
+
+The components of 18.5 were built on branch `vishesh/eleven-labs-polishing`. `docs/v1_modifications.md`
+is the client-facing account of it; this is the scorecard against the plan.
+
+| Component | State | Measured or verified |
+| --- | --- | --- |
+| C1 Streaming endpoint | Built | `POST /v1/speech/stream`. First sound about 1.0 s on a plain reply, about 1.25 s on a tool turn, against 3 to 5 s before |
+| C2 Pre-warm | Built | First turn about 1.3 s instead of 5 s or more. Also warms transcription |
+| C3 Latency instrumentation | Built | `timings_ms` on every turn, `Server-Timing`, `GET /v1/metrics`, `tools/latency_bench.py` |
+| C4 Agent configuration | Built | Character model at reasoning `none`; filler only after 2.2 s; V3 path proven on a throwaway agent and left off; `gemini-2.5-flash-lite` rejected for missing tool calls |
+| C5 Director | Built | Zero false awards over 480 live reviews; recall 0.91 to 0.96; median 1.3 s, above the 1 s target, and off the reply path |
+| C6 Soundscape | Built | Four MP3s from the Sound Effects API, served by `/v1/ambience`; not yet checked by ear |
+| C7 Visemes and interruption | Built | 14 visemes from alignment data; an interruption at 500 ms was resolved live to the words actually heard |
+| C8 World-state feed | Already built by the Unity lane | `POST /v1/runs/{run_id}/notes`; the director's notes use the same channel |
+| C9 Pronunciation and confidence | Built | Per-word confidence live; one `gpt-audio-1.5` pass inside the report, labelled as impressions |
+| C10 Feedback report | Built, minus two parts | `POST /v1/feedback`. ElevenLabs' second opinion and the latency figures are not in the report yet |
+| C11 Tests | Built | 162 unit tests; the 40-case eval gate; 5 of 5 ElevenLabs agent tests, three times each; two live end-to-end scripts |
+| C12 Codex | **Not done** | `AGENTS.md` exists. The eval was written by a Claude Code agent and the log says so. The Codex jobs still need a person to run them |
+| C13, C14 | Not built | Stretch, as planned |
+
+Three things the build found that the plan did not know:
+
+1. **Gestures as a tool call were the largest single latency cost.** Any tool call makes the character's model
+   generate twice, and a nod on most turns meant most turns paid for it. Gestures are now chosen on the server
+   from the character's words, in microseconds.
+2. **ElevenLabs never sets the last-frame flag**, and answering before the previous line has finished on its
+   playback clock counts as interrupting that line. A reply is therefore ended by counting voiced characters
+   against the reply text, and a correction that describes the previous line is ignored.
+3. **Forcing a spoken line before a tool call** ("Claro, un café de olla y una concha.") lets the learner hear
+   Maria at once while the order is priced. It needed the turn to stay open across the tool call; ending it at
+   the first sentence lost the second, which then arrived as the answer to the next question.
+
+Added for the learner, beyond the original component list: levels A1 to B2 that change how the characters
+speak; **recasting**, where a character uses the correct form in its reply and never points at the mistake;
+hints on request; a genuinely slower repeat when asked for in Spanish; free-form conversation (the wifi, what
+a dish is, changing an order); memory when a conversation reopens; and a silent clip that costs nothing.
+
+One operational fact: the first ElevenLabs account ran out of minutes during the build. The server runs on the
+second, and a third is staged. `tools/switch_account.py` does the move.
