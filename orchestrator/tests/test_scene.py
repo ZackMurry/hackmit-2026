@@ -203,17 +203,6 @@ def test_npcs_endpoint_describes_the_cast():
     assert [g["id"] for g in body["goals"]] == ["introduce", "hometown", "order"]
 
 
-def test_greeting_audio_is_served_when_present():
-    with TestClient(create_app(pack=ScenePack.load(PACK_DIR))) as client:
-        response = client.get("/v1/npcs/maria/greeting")
-        missing = client.get("/v1/npcs/nobody/greeting")
-    assert missing.status_code == 404
-    if (PACK_DIR / "greetings" / "maria.wav").is_file():
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "audio/wav"
-        assert response.content[:4] == b"RIFF"
-
-
 def test_health_reports_the_loaded_pack():
     with TestClient(create_app(pack=ScenePack.load(PACK_DIR))) as client:
         assert client.get("/health").json()["scenario_pack"] == "cafe_cancun_v1"

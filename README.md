@@ -9,7 +9,7 @@ Generated world models + immersive language learning
   `Assets/Scenes/SampleScene.unity` (ModernHouse).
 - `Assets/Worlds/` — WorldLabs Gaussian-splat worlds (`.spz`) and their collider meshes.
 - `orchestrator/` — the Python API: scenario generation, speech turns, run recording and grading.
-- `scenarios/cafe_cancun/` — the authored café: cast, prompts, menu, goals and greeting audio.
+- `scenarios/cafe_cancun/` — the authored café: cast, prompts, menu and goals.
 - `tools/spz_to_collider.py` — builds a walkable collider `.glb` from a `.spz` when WorldLabs didn't ship one.
 
 ## The front — `Wish`
@@ -26,8 +26,8 @@ Madrid, Buenos Aires, Paris… see `Wish.Places`) and a pin lands on it and the 
 you. Enter: the sentence fades, the globe swings the pin round and rushes up to it while you fly
 forward into the clouds — they stream past, gather round the flight path, the cloud sea climbs,
 and a white wash finishes the screen — and where the sentence was, a few words say what is
-happening (scouting the place, World Labs Marble building the world, ElevenLabs casting the
-locals, writing your three goals, go). `destinationScene` loads behind the white, then a shell of
+happening, in the traveller's terms rather than ours (heading for the place, setting the
+scene, meeting the locals, a reason to be there, go — no vendor or backend names). `destinationScene` loads behind the white, then a shell of
 clouds hung in front of the new camera flies apart onto the spawn. Today every sentence lands in
 CancunCafe, the worked example of a generated trip; the receipt at the end sends you back with
 **N**. The line is kept in PlayerPrefs (`Wish.LastLine`) for when generation is wired to
@@ -63,8 +63,9 @@ what comes back — speech recognition, the character and the voice are the serv
   `learnerName` (optional) is how the characters address you.
 - `CastClient` (same object) fetches the authored cast from `/v1/npcs` when the scene starts and,
   for every spawned NPC whose id (or server alias) matches a character, swaps in the server's
-  opening line as the greeting together with its pre-recorded audio (`/v1/npcs/{id}/greeting`,
-  same voice as the live agent, no API spend). Characters without a configured agent are
+  opening line as the greeting caption. When you walk up, the NPC opens its conversation
+  (`POST /v1/speech/sessions/{id}/warm`) and says that line live, in its own voice; the first
+  thing you say then costs no connection time. Characters without a configured agent are
   flagged in the console.
 - `GoalTracker` (same object) ticks the quest list from what you actually said: after every
   reply it polls `/v1/runs/{run_id}/goals` until the server's director has judged the turn, and
@@ -216,7 +217,7 @@ lip-synced speech, E-to-talk, walking, schedule).
 | `position`, `yaw`, `scale` | Where the feet start (world units), heading in degrees (0 = +Z), avatar scale.                          |
 | `walkSpeed`, `turnSpeed`   | m/s and deg/s defaults for this NPC.                                                                    |
 | `idleClips`, `walkClip`    | Resources paths of mocap clips. No walk clip → procedural gait.                                         |
-| `greeting`                 | Line said when the player first walks up (offline fallback; `CastClient` replaces it with the server's recorded opening line). |
+| `greeting`                 | Line said when the player first walks up (offline fallback; `CastClient` replaces it with the server's opening line, which the live agent then speaks). |
 | `seat`                     | Seat id from `seats.json` to start the scene sitting in.                                                |
 | `moves[].trigger`          | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`), `"greet"` (this NPC finished its greeting), `"action"` (server reported scene action `after` for this NPC). |
 | `moves[].delay`            | Seconds to wait after the trigger, e.g. walk over 4 s after `order` is done.                     |
@@ -272,7 +273,7 @@ the one not talking turns to watch the one who is (`NpcLookAt.watchOthers`). Onl
 at most directly, and an NPC mid-turn keeps it (`NpcInteractable.Focused`). When Maria sets off
 to take the order her move's `tell` list posts a scene note to Luis (`POST /v1/runs/{run}/notes`)
 so he stops asking you questions you are not going to answer, and another when she leaves so he
-picks the thread back up. The characters, prompts, menu and greeting audio live in
+picks the thread back up. The characters, prompts, menu and goals live in
 `scenarios/cafe_cancun/` (see `docs/api.md`). Avatars: `Avatars/Female_Adult_08` and
 `Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
 

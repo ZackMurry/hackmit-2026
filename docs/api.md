@@ -47,20 +47,13 @@ curl http://127.0.0.1:8765/v1/npcs
 ```
 
 Returns the cast so the client does not hardcode anything: for each character an
-`npc_id` (send this as `npc_id`), `name`, `role`, `gender`, the `greeting` text, a
-`greeting_audio` URL, the scene `actions` it can trigger, `aliases`, and `ready` —
+`npc_id` (send this as `npc_id`), `name`, `role`, `gender`, the `greeting` text (the
+opening line the character says on `warm`, for a caption or an offline fallback), the
+scene `actions` it can trigger, `aliases`, and `ready` —
 false when no agent id is configured for it. An alias is an older id that still
 resolves to the same character, so a client that has not been renamed keeps working;
 `mariana` currently resolves to `maria`. Also returns the `menu`, the `goals` and the valid
 `gestures`. 503 if no scenario pack is loaded.
-
-```sh
-curl http://127.0.0.1:8765/v1/npcs/maria/greeting --output maria.wav
-```
-
-The character's opening line as PCM16 16 kHz mono WAV, recorded from the agent itself.
-Play it when the player walks up: it costs nothing and needs no round trip. 404 when
-that character has no recorded greeting.
 
 Characters are created and updated from the scenario files by
 `tools/provision_agents.py`; agent ids then live in `orchestrator/.env` as
@@ -162,15 +155,21 @@ HTTP turns. For a reply that starts playing before it is finished, see Streaming
 
 ```
 POST /v1/speech/sessions/{session_id}/warm?npc_id=maria&run_id=<visit>&learner_name=<name>&learner_level=A2
-→ 204
+→ 200 {"agent_transcript": "¡Buenas tardes! …", "audio_base64": "…", "media_type": "audio/wav",
+       "sample_rate": 16000, "user_transcript": null, "actions": [], "visemes": [], …}
+→ 204 when the conversation was already open
 ```
 
-Opens the character's conversation in the background (about two seconds). Call it when
-the player walks up, at the same moment the pre-recorded greeting starts playing, and
-the learner's first sentence costs the same as every other one instead of five seconds
-or more. Safe to repeat; a warm session is left alone. Same `session_id` as the turns
-that follow. A silent or garbled clip on the first turn returns 422 and does **not**
-drop the warm session.
+Opens the character's conversation (about a second) and returns their opening line,
+spoken live by the agent in their own voice — the same JSON shape as
+`/v1/speech?response_format=json`, with no learner side. Call it when the player walks
+up and play the audio; the learner's first sentence then costs the same as every other
+one instead of five seconds or more. The greeting is recorded in the run transcript as
+an `npc` turn. Safe to repeat: a conversation that is already open has already said
+hello, so the second call is 204 with no body. Same `session_id` as the turns that
+follow. A silent or garbled clip on the first turn returns 422 and does **not** drop
+the warm session. A first `/v1/speech` turn on a session that was never warmed still
+works; the greeting is simply never heard.
 
 ### Streaming
 
@@ -247,8 +246,8 @@ the clip is transcribed once more pinned to the target language. That costs a se
 transcription request only on a misdetection, which is logged at INFO.
 
 Agent output must be PCM; its sample rate is read from session metadata. Enable
-agent_response and audio client events. The initial greeting is drained before
-submitting the user's turn. A reply is complete when its text has been fully voiced,
+agent_response and audio client events. The initial greeting is captured for `warm`
+to return and kept out of the first reply. A reply is complete when its text has been fully voiced,
 judged from the alignment data that arrives with each audio frame; a turn stays open
 across a tool call so speech, tool, speech is one reply. Transcription and the socket
 open run in parallel. Scene tool calls are priced and answered by the server, and

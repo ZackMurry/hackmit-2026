@@ -15,8 +15,9 @@ using UnityEngine.SceneManagement;
 /// You finish the sentence; that is the whole configuration. Name a place and a pin
 /// lands on the globe and it turns to face you. Enter: the globe swings the pin round
 /// and rushes up to it while you fly forward into the clouds — they stream past, close
-/// in, and fill the screen white — and a few words say what is being done (scouting,
-/// building, casting the voices, writing the goals). The destination loads behind the
+/// in, and fill the screen white — and a few words, in the traveller's terms rather than
+/// ours, say what is happening (heading there, setting the scene, meeting the locals, a
+/// reason to be there, go). The destination loads behind the
 /// white, and the clouds part onto the spawn (<see cref="CloudCurtain"/>).
 ///
 /// Every sentence lands in <see cref="destinationScene"/> for now; Café Nader is the
@@ -85,10 +86,10 @@ public class Wish : MonoBehaviour
     /// <summary>What is said while the clouds close in, as fractions of the trip.</summary>
     static readonly (float at, string title, string sub)[] Stages =
     {
-        (0.00f, "Scouting {0}", "reading your line for where you are and who's there"),
-        (0.19f, "Building the world", "World Labs Marble, from your line"),
-        (0.41f, "Casting the locals", "ElevenLabs voices, and a reason to talk to you"),
-        (0.61f, "Writing your three goals", "small enough to finish in one visit"),
+        (0.00f, "Heading for {0}", "somewhere real, with real people in it"),
+        (0.19f, "Setting the scene", "the streets, the counter, the menu on the wall"),
+        (0.41f, "Meeting the locals", "they speak at full speed, and never in English"),
+        (0.61f, "Giving you a reason to be there", "three small things to get done before you leave"),
         (0.79f, "Go.", "walk up to anyone and press E to talk"),
     };
     // Fractions of the trip: the globe rushes up to the pin; the clouds close over it.

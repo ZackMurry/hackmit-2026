@@ -27,10 +27,35 @@ class Scenarios:
 class Speech:
     def __init__(self):
         self.calls = []
+        self.greeted = set()
 
     async def respond(self, request):
         self.calls.append(request)
         return SpeechOutput(b"\x00\x00", "audio/pcm", 16000, "Un café", "Claro")
+
+    async def warm(self, request):
+        if request.session_id in self.greeted:
+            return None
+        self.greeted.add(request.session_id)
+        return SpeechOutput(b"RIFF\x00\x00", "audio/wav", 16000, None, "¡Hola!",
+                            timings_ms={"open": 700})
+
+
+def test_warm_returns_the_greeting_once_and_records_it(tmp_path):
+    speech = Speech()
+    with TestClient(create_app(speech=speech, data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
+        session = uuid4()
+        params = {"npc_id": "luis", "run_id": "visit1"}
+        hello = client.post(f"/v1/speech/sessions/{session}/warm", params=params)
+        assert hello.status_code == 200
+        assert hello.json()["agent_transcript"] == "¡Hola!"
+        assert hello.json()["media_type"] == "audio/wav"
+        assert hello.json()["user_transcript"] is None and hello.json()["actions"] == []
+        assert hello.headers["server-timing"] == "open;dur=700"
+        # The conversation is open and has said hello: nothing more to play.
+        assert client.post(f"/v1/speech/sessions/{session}/warm", params=params).status_code == 204
+    recorded = (tmp_path / "runs" / "visit1.jsonl").read_text().splitlines()
+    assert len(recorded) == 1 and '"role":"npc"' in recorded[0] and "¡Hola!" in recorded[0]
 
 
 def test_scenario_persistence_and_speech_context(tmp_path):

@@ -17,10 +17,8 @@ public class NpcConversation : MonoBehaviour
     [Header("Character")]
     [Tooltip("npc_id sent with every turn; must match an agent configured on the server (e.g. luis, maria).")]
     public string npcId = "";
-    [Tooltip("Said the first time the player walks up. Empty = none. CastClient replaces it with the server's opening line.")]
+    [Tooltip("Said the first time the player walks up. Empty = none. CastClient replaces it with the server's opening line, which the live character then speaks; this text is the caption and the offline fallback.")]
     public string greeting = "";
-    [Tooltip("Pre-recorded audio for the greeting (fetched by CastClient). Null = placeholder voice.")]
-    public AudioClip greetingClip;
 
     [Header("Input")]
     public Key talkKey = Key.E;
@@ -186,12 +184,32 @@ public class NpcConversation : MonoBehaviour
         Busy = false;
     }
 
+    /// <summary>
+    /// Open the conversation and let the character say hello in their own voice. This
+    /// also pays the connection cost now, so the player's first sentence is answered as
+    /// fast as every later one. Offline, or if the server fails, the authored line is
+    /// still "said" with the placeholder voice so the scene keeps moving.
+    /// </summary>
     IEnumerator SayGreeting()
     {
         Busy = true;
-        Last = new Exchange { reply = greeting, time = Time.time };
-        yield return Say(greeting, greetingClip);
-        greetingClip = null; // Say() released it
+        string text = greeting;
+        AudioClip clip = null;
+        var client = ConversationClient.Instance;
+        if (client != null && client.IsOnline)
+        {
+            Status = "…";
+            yield return client.Warm(SessionId, npcId, reply =>
+            {
+                if (reply == null)
+                    return;
+                clip = reply.clip;
+                if (!string.IsNullOrEmpty(reply.text))
+                    text = reply.text;
+            }, error => Debug.LogWarning($"{name}: could not open the conversation for the greeting: {error}"));
+        }
+        Last = new Exchange { reply = text, time = Time.time };
+        yield return Say(text, clip);
         Busy = false;
         Greeted?.Invoke();
     }

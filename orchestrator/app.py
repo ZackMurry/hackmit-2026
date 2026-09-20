@@ -9,7 +9,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from .director import RUN_ID, Director, DirectorProvider, GoalStore, create_director_provider
 from .grading import (GraderProvider, OpenAIGrader, TranscriptStore, create_grader,
@@ -156,8 +156,6 @@ def create_app(*, speech: SpeechProvider | None = None,
                 "role": npc.role,
                 "gender": npc.gender,
                 "greeting": npc.first_message,
-                "greeting_audio": f"/v1/npcs/{npc.npc_id}/greeting"
-                                  if _greeting_path(npc.npc_id) else None,
                 "actions": npc.tools,
                 "max_duration_seconds": npc.max_duration_seconds,
                 "ready": npc.npc_id in configured,
@@ -166,25 +164,6 @@ def create_app(*, speech: SpeechProvider | None = None,
             "menu": [{"item_id": k, "name_es": v.name_es, "price_mxn": v.price_mxn,
                       "available": v.available} for k, v in pack.menu.items.items()],
         }
-
-    def _greeting_path(npc_id: str) -> Path | None:
-        if pack is None or pack.root is None or npc_id not in pack.npcs:
-            return None
-        candidate = Path(pack.root) / "greetings" / f"{npc_id}.wav"
-        return candidate if candidate.is_file() else None
-
-    @app.get("/v1/npcs/{npc_id}/greeting")
-    async def greeting(npc_id: str):
-        """The character's opening line as audio, pre-recorded so it costs nothing.
-
-        Play this when the player walks up. It is the same voice and wording the live
-        agent opens with.
-        """
-        path = _greeting_path(npc_id)
-        if path is None:
-            raise HTTPException(404, "No greeting audio for this character")
-        return FileResponse(path, media_type="audio/wav",
-                            headers={"Cache-Control": "public, max-age=3600"})
 
     @app.post("/v1/scenarios", response_model=ScenarioResponse, openapi_extra={
         "requestBody": {"required": True, "content": {"application/json": {
@@ -408,23 +387,41 @@ def create_app(*, speech: SpeechProvider | None = None,
                 app.state.director.schedule(run, rubric)
         return achieved
 
-    @app.post("/v1/speech/sessions/{session_id}/warm", status_code=204)
+    @app.post("/v1/speech/sessions/{session_id}/warm")
     async def warm(request: Request, session_id: UUID, npc_id: str = NPC,
                    scenario_id: UUID | None = None, run_id: str | None = RUN,
                    learner_name: str | None = Query(default=None, max_length=60),
                    learner_level: str | None = LEVEL):
-        """Open the character's conversation before the learner speaks.
+        """Open the character's conversation and get their opening line.
 
-        Call this when the player walks up, while the greeting plays. The first real
-        turn then costs the same as every other one instead of also paying to connect.
-        Safe to repeat; a warm session is left alone.
+        Call this when the player walks up. The character greets them in their own
+        live voice (200, the same JSON shape as `/v1/speech?response_format=json`
+        without a `user_transcript`), and the learner's first turn then costs the
+        same as every other one instead of also paying to connect. Safe to repeat: a
+        conversation that is already open has already said hello, so this is 204.
         """
         turn = await parse_turn(request, session_id, npc_id, scenario_id, None, run_id,
                                 learner_name, learner_level, None, need_audio=False)
         if not hasattr(app.state.speech, "warm"):
             raise HTTPException(501, "Speech adapter cannot pre-warm sessions")
-        await provider_call(app.state.speech.warm(turn), timeout)
-        return Response(status_code=204)
+        output = await provider_call(app.state.speech.warm(turn), timeout)
+        if output is None:
+            return Response(status_code=204)
+        if (not isinstance(output, SpeechOutput) or not isinstance(output.audio, bytes)
+                or not output.audio or len(output.audio) > MAX_AUDIO_BYTES
+                or output.media_type not in SUPPORTED_AUDIO_TYPES):
+            raise ValueError("Invalid speech output")
+        await after_turn(turn, None, output.agent_transcript, [], ())
+        headers = {"X-Session-ID": str(session_id), "Cache-Control": "no-store"}
+        if output.timings_ms:
+            headers["Server-Timing"] = ", ".join(
+                f"{stage};dur={ms}" for stage, ms in output.timings_ms.items())
+        return JSONResponse({"session_id": str(session_id), "npc_id": npc_id,
+            "audio_base64": base64.b64encode(output.audio).decode("ascii"),
+            "media_type": output.media_type, "sample_rate": output.sample_rate,
+            "user_transcript": None, "agent_transcript": output.agent_transcript,
+            "actions": [], "visemes": list(output.visemes), "goals_achieved": [],
+            "timings_ms": output.timings_ms or {}}, headers=headers)
 
     @app.post("/v1/speech", openapi_extra=AUDIO_BODY)
     async def respond(request: Request, session_id: UUID, npc_id: str = NPC,

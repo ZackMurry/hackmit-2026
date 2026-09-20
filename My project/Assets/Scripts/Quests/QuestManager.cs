@@ -4,9 +4,11 @@ using UnityEngine;
 
 /// <summary>
 /// Loads the mini-quest checklist from StreamingAssets/quests.json and tracks
-/// completion. <see cref="QuestHud"/> draws it; the conversation backend marks
-/// items off with <see cref="Complete"/> (or by editing the JSON file, which is
-/// watched for changes so an external process can drive it too).
+/// completion in memory for this run. <see cref="QuestHud"/> draws it; the
+/// conversation backend marks items off with <see cref="Complete"/> (or by editing
+/// the JSON file, which is watched for changes so an external process can drive it
+/// too). Nothing is written back: the file is the authored list, and every load of
+/// the scene starts from it.
 /// </summary>
 public class QuestManager : MonoBehaviour
 {
@@ -17,9 +19,6 @@ public class QuestManager : MonoBehaviour
 
     [Tooltip("Re-read the file when it changes on disk, so statuses can be flipped from outside Unity.")]
     public bool watchFile = true;
-
-    [Tooltip("Write statuses back to the file whenever one changes in-game.")]
-    public bool saveOnChange = true;
 
     public QuestList Quests { get; private set; } = new QuestList();
 
@@ -74,27 +73,12 @@ public class QuestManager : MonoBehaviour
         Changed?.Invoke();
     }
 
-    public void Save()
-    {
-        try
-        {
-            File.WriteAllText(FilePath, JsonUtility.ToJson(Quests, prettyPrint: true));
-            lastWrite = File.GetLastWriteTimeUtc(FilePath);
-        }
-        catch (Exception e)
-        {
-            Debug.LogError($"QuestManager: could not write {FilePath}: {e.Message}");
-        }
-    }
-
     public Quest Find(string id) => Array.Find(Quests.quests, q => q.id == id);
 
-    /// <summary>Swap in a whole new quest list (e.g. a generated scenario's goals) and persist it like any other change.</summary>
+    /// <summary>Swap in a whole new quest list (e.g. a generated scenario's goals).</summary>
     public void Replace(QuestList list)
     {
         Quests = list ?? new QuestList();
-        if (saveOnChange)
-            Save();
         Changed?.Invoke();
     }
 
@@ -113,8 +97,6 @@ public class QuestManager : MonoBehaviour
             }
         if (!changed)
             return;
-        if (saveOnChange)
-            Save();
         Changed?.Invoke();
     }
 
@@ -142,8 +124,6 @@ public class QuestManager : MonoBehaviour
             return true;
 
         quest.status = status;
-        if (saveOnChange)
-            Save();
         Changed?.Invoke();
         return true;
     }

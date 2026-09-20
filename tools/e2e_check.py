@@ -148,34 +148,35 @@ def main() -> int:
           "" if all(n["ready"] for n in by_id.values())
           else "set AGENT_ID_MARIA / AGENT_ID_LUIS in orchestrator/.env")
 
-    status, raw, headers = request("GET", "/v1/npcs/maria/greeting")
+    status, raw, headers = request("POST", f"/v1/speech/sessions/{uuid.uuid4()}/warm?npc_id=maria")
     seconds = 0.0
-    if status == 200 and raw[:4] == b"RIFF":
-        with wave.open(io.BytesIO(raw)) as clip:
-            seconds = clip.getnframes() / clip.getframerate()
-    check(seconds > 0.3, "greeting: Maria's opening line is served as playable audio",
-          f"{seconds:.1f}s, {len(raw)} bytes, {headers.get('content-type')}")
+    hello = json.loads(raw) if status == 200 else {}
+    if hello.get("audio_base64"):
+        clip_bytes = base64.b64decode(hello["audio_base64"])
+        if clip_bytes[:4] == b"RIFF":
+            with wave.open(io.BytesIO(clip_bytes)) as clip:
+                seconds = clip.getnframes() / clip.getframerate()
+    check(seconds > 0.3, "greeting: Maria says her opening line live when the player walks up",
+          f"{seconds:.1f}s, «{hello.get('agent_transcript', '')}», {headers.get('server-timing')}")
 
     # ---------------------------------------------------------------- Maria
-    # She asks one clarifying question before serving, so the order is settled on the
-    # second turn, not the first. Actions are collected across both.
+    # Naming something on the menu is the whole order: she serves on that turn, with
+    # no clarifying question and no "¿sí?" in between.
     print("\n  — Maria, the waitress —")
     served: list[dict] = []
     normal_paces: list[float] = []
-    for utterance in ("Buenas tardes. Quiero un café de olla y una concha, por favor.",
-                      "Para tomar aquí, por favor."):
-        reply = speak(utterance, "maria", run, voice, maria_session)
-        print(f"        {describe(reply)}")
-        if "_status" in reply:
-            check(False, "maria: turn completed", reply["_body"])
-            break
+    reply = speak("Buenas tardes. Quiero un café de olla y una concha, por favor.",
+                  "maria", run, voice, maria_session)
+    print(f"        {describe(reply)}")
+    if "_status" in reply:
+        check(False, "maria: turn completed", reply["_body"])
+    else:
+        check(True, "maria: turn completed")
+        check(bool(reply.get("audio_base64")), "maria: replied with audio")
         served += [a for a in reply.get("actions", []) if a.get("action") == "serve_order"]
         normal_paces += [p for p in [pace(reply)] if p]
-    else:
-        check(True, "maria: both turns completed")
-        check(bool(reply.get("audio_base64")), "maria: replied with audio")
 
-    check(bool(served), "maria: serve_order fired as a scene action")
+    check(bool(served), "maria: serve_order fired on the turn the order was named")
     if served:
         check(served[-1].get("total_mxn") == 80,
               "maria: total priced by Python, not the model",
@@ -236,9 +237,6 @@ def main() -> int:
     ]:
         status, _, _ = request("POST", path, body, ctype)
         check(status == want, f"{label} ({want})", f"got {status}")
-
-    status, _, _ = request("GET", "/v1/npcs/nobody/greeting")
-    check(status == 404, "unknown greeting returns 404")
 
     # ---------------------------------------------------------------- summary
     passed = sum(1 for ok, _ in results if ok)

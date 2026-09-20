@@ -7,14 +7,13 @@ using UnityEngine.SceneManagement;
 /// <summary>
 /// End of the episode: the bill. When every quest is done (as reported through
 /// <see cref="QuestManager"/>, i.e. by the conversation server's scene actions) or the
-/// player presses <see cref="endKey"/>, gameplay stops and Café Nader's till prints a
+/// player presses <see cref="endKey"/>, Café Nader's till prints a
 /// receipt — each quest is a line item and its "price" is the A+…F grade for how the
 /// learner handled it in Spanish; the total is the overall grade, stamped on.
 /// The grades are the server's verdict on everything said this run
-/// (<c>POST /v1/grade</c> with the run id every turn was recorded under); the slip
-/// prints its header at once and the lines arrive a few seconds later, like a till
-/// waiting on the kitchen. Offline, <see cref="scoresFile"/> stands in with the same
-/// shape. IMGUI like the rest of the HUD.
+/// (<c>POST /v1/grade</c> with the run id every turn was recorded under); nothing is
+/// shown until that verdict is in, then the whole slip comes out at once. Offline,
+/// <see cref="scoresFile"/> stands in with the same shape. IMGUI like the rest of the HUD.
 /// </summary>
 [RequireComponent(typeof(QuestManager))]
 public class EpisodeSummary : MonoBehaviour
@@ -51,11 +50,11 @@ public class EpisodeSummary : MonoBehaviour
     public Color stampRed = new(0.72f, 0.16f, 0.13f, 0.85f);
     [Range(0f, 1f)] public float dimAlpha = 0.6f;
 
-    /// <summary>True once the receipt is up; gameplay input is released.</summary>
+    /// <summary>True once the episode is over and the grade has been asked for; nothing more can end it.</summary>
     public bool Ended { get; private set; }
-    /// <summary>True while the server is still grading the run; the slip is half printed.</summary>
-    public bool Grading { get; private set; }
-    /// <summary>The verdict; null until <see cref="Grading"/> finishes.</summary>
+    /// <summary>True once the grade is in and the receipt is up; gameplay input is released.</summary>
+    public bool Printed => Scores != null;
+    /// <summary>The verdict; null until the server (or the offline stand-in) has graded the run.</summary>
     public ScoreSheet Scores { get; private set; }
     public event Action Finished;
 
@@ -97,13 +96,6 @@ public class EpisodeSummary : MonoBehaviour
     void Start()
     {
         quests.Changed += OnQuestsChanged;
-        // Statuses persist in quests.json; a run that starts fully done is stale state
-        // from the previous episode, not a finished one.
-        if (AllDone())
-        {
-            Debug.Log("EpisodeSummary: quests were already complete at start; resetting for a fresh episode.");
-            quests.ResetAll();
-        }
         OnQuestsChanged();
     }
 
@@ -127,6 +119,8 @@ public class EpisodeSummary : MonoBehaviour
             if (keyboard[endKey].wasPressedThisFrame && Cursor.lockState == CursorLockMode.Locked)
                 End();
         }
+        else if (!Printed)
+            return; // the till is still working; the world stays as it is until the slip is ready
         else if (keyboard[restartKey].wasPressedThisFrame)
             Restart(SceneManager.GetActiveScene().path);
         else if (keyboard[newTripKey].wasPressedThisFrame)
@@ -158,12 +152,51 @@ public class EpisodeSummary : MonoBehaviour
             End();
     }
 
-    /// <summary>Stop the episode and print the bill.</summary>
+    /// <summary>
+    /// Stop the episode and ask for the bill. Grading takes the server a few seconds,
+    /// and a blank slip is nothing to look at, so the world carries on exactly as it
+    /// was until the grade is in; then the receipt is printed in one go.
+    /// </summary>
     public void End()
     {
         if (Ended)
             return;
         Ended = true;
+        RequestGrades(ConversationClient.Instance);
+    }
+
+    void RequestGrades(ConversationClient client)
+    {
+        if (client == null || !client.IsOnline)
+        {
+            Show(LoadStandIn());
+            Debug.Log($"EpisodeSummary: episode over (offline), stand-in grades, overall {OverallGrade()}");
+            return;
+        }
+        if (client.TurnsSent == 0)
+        {
+            // The server has nothing recorded under this run; don't make it guess.
+            Show(new ScoreSheet { summary = "You didn't say a word to anyone. Next visit, try ordering something: even «un café, por favor» counts." });
+            Debug.Log("EpisodeSummary: episode over, no turns to grade");
+            return;
+        }
+        client.StartCoroutine(client.Grade(
+            json =>
+            {
+                Show(Parse(json, "the server's grade") ?? new ScoreSheet { summary = "The till printed something unreadable; the grades are lost." });
+                Debug.Log($"EpisodeSummary: graded run {client.RunId}, overall {OverallGrade()}");
+            },
+            error =>
+            {
+                Show(new ScoreSheet { summary = $"The till couldn't grade this visit ({error})." });
+                Debug.LogWarning($"EpisodeSummary: grading failed: {error}");
+            }));
+    }
+
+    /// <summary>The grade is in: freeze the world and put the receipt up.</summary>
+    void Show(ScoreSheet scores)
+    {
+        Scores = scores ?? new ScoreSheet();
         printedAt = DateTime.Now.ToString("dd/MM/yyyy  HH:mm");
 
         Cursor.lockState = CursorLockMode.None;
@@ -180,39 +213,7 @@ public class EpisodeSummary : MonoBehaviour
             foreach (var talk in FindObjectsByType<NpcConversation>(FindObjectsSortMode.None))
                 client.StartCoroutine(client.EndSession(talk.SessionId));
 
-        RequestGrades(client);
         Finished?.Invoke();
-    }
-
-    void RequestGrades(ConversationClient client)
-    {
-        if (client == null || !client.IsOnline)
-        {
-            Scores = LoadStandIn();
-            Debug.Log($"EpisodeSummary: episode over (offline), stand-in grades, overall {OverallGrade()}");
-            return;
-        }
-        if (client.TurnsSent == 0)
-        {
-            // The server has nothing recorded under this run; don't make it guess.
-            Scores = new ScoreSheet { summary = "You didn't say a word to anyone. Next visit, try ordering something: even «un café, por favor» counts." };
-            Debug.Log("EpisodeSummary: episode over, no turns to grade");
-            return;
-        }
-        Grading = true;
-        client.StartCoroutine(client.Grade(
-            json =>
-            {
-                Grading = false;
-                Scores = Parse(json, "the server's grade") ?? new ScoreSheet { summary = "The till printed something unreadable; the grades are lost." };
-                Debug.Log($"EpisodeSummary: graded run {client.RunId}, overall {OverallGrade()}");
-            },
-            error =>
-            {
-                Grading = false;
-                Scores = new ScoreSheet { summary = $"The till couldn't grade this visit ({error})." };
-                Debug.LogWarning($"EpisodeSummary: grading failed: {error}");
-            }));
     }
 
     void Restart(string scenePath)
@@ -297,8 +298,6 @@ public class EpisodeSummary : MonoBehaviour
 
     public string OverallGrade()
     {
-        if (Grading)
-            return "";
         if (!string.IsNullOrEmpty(Scores?.overall))
             return Scores.overall.Trim().ToUpperInvariant();
         float sum = 0f;
@@ -324,7 +323,7 @@ public class EpisodeSummary : MonoBehaviour
 
     void OnGUI()
     {
-        if (!Ended)
+        if (!Printed)
             return;
         EnsureStyles();
 
@@ -422,14 +421,13 @@ public class EpisodeSummary : MonoBehaviour
             Text($"Te atendió: {waiter}", body, ink);
         Rule();
 
-        // Line items: quest text, dotted leader, grade in the price column. While the
-        // server is still grading, the column is blank: the slip is still printing.
+        // Line items: quest text, dotted leader, grade in the price column.
         var list = quests.Quests?.quests ?? Array.Empty<Quest>();
         float textCol = inner - gradeCol - ch;
         foreach (var q in list)
         {
             var s = ScoreFor(q.id);
-            string grade = Grading ? "" : !string.IsNullOrEmpty(s?.grade) ? s.grade.Trim().ToUpperInvariant() : "—";
+            string grade = !string.IsNullOrEmpty(s?.grade) ? s.grade.Trim().ToUpperInvariant() : "—";
             var gradeInk = IsPoor(grade) ? stampRed : grade == "—" ? faintInk : ink;
 
             string label = q.text ?? q.id;
@@ -452,7 +450,7 @@ public class EpisodeSummary : MonoBehaviour
             }
             y += h;
 
-            string note = Grading ? null : !string.IsNullOrEmpty(s?.comment) ? s.comment : q.IsDone ? null : "no llegaste hasta aquí";
+            string note = !string.IsNullOrEmpty(s?.comment) ? s.comment : q.IsDone ? null : "no llegaste hasta aquí";
             Text(note, small, faintInk, indent: ch * 2f);
             y += line * 0.35f;
         }
@@ -463,12 +461,7 @@ public class EpisodeSummary : MonoBehaviour
         TwoUp("TOTAL", overall, bold, IsPoor(overall) ? stampRed : ink);
         Rule();
 
-        if (Grading)
-        {
-            Text("· · · imprimiendo · · ·", smallCentred, faintInk);
-            Rule();
-        }
-        else if (!string.IsNullOrEmpty(Scores?.summary))
+        if (!string.IsNullOrEmpty(Scores?.summary))
         {
             Text(Scores.summary, small, ink);
             Rule();
@@ -480,7 +473,7 @@ public class EpisodeSummary : MonoBehaviour
         y += Pad;
 
         // The grade is the total; the stamp says whether the bill is settled.
-        if (draw && !Grading)
+        if (draw)
             Stamp(IsPoor(overall) ? "PENDIENTE" : "PAGADO", new Vector2(x + inner * 0.5f, totalY + line * 0.5f));
 
         return y + ToothHeight;

@@ -5,8 +5,8 @@ using UnityEngine;
 /// <summary>
 /// Pulls the authored cast from the orchestrator's scenario pack (<c>GET /v1/npcs</c>)
 /// and applies it to the spawned NPCs, matched by <c>npc_id</c> or one of its aliases:
-/// each character's opening line becomes the NPC's greeting, spoken with the server's
-/// pre-recorded audio (same voice as the live agent, no API call, no round trip).
+/// each character's opening line becomes the NPC's greeting caption (the live agent
+/// speaks it when the player walks up; see <see cref="NpcConversation"/>).
 /// Characters with no agent configured are flagged so a silent NPC is explained in the
 /// console rather than discovered in play. Everything degrades to <c>npcs.json</c> when
 /// the server is down.
@@ -16,7 +16,7 @@ public class CastClient : MonoBehaviour
     public static CastClient Instance { get; private set; }
 
     public bool loadOnStart = true;
-    [Tooltip("Use the server's opening lines (text + recorded audio) as greetings.")]
+    [Tooltip("Use the server's opening lines as the NPCs' greetings.")]
     public bool applyGreetings = true;
 
     /// <summary>Loaded cast, or null.</summary>
@@ -85,7 +85,6 @@ public class CastClient : MonoBehaviour
     {
         if (Current?.npcs == null || NpcManager.Instance == null)
             return;
-        var client = ConversationClient.Instance;
 
         foreach (var pair in NpcManager.Instance.Spawned)
         {
@@ -105,15 +104,6 @@ public class CastClient : MonoBehaviour
 
             if (!string.IsNullOrEmpty(member.greeting))
                 talk.greeting = member.greeting;
-            if (!string.IsNullOrEmpty(member.greeting_audio) && client != null)
-            {
-                var target = talk;
-                StartCoroutine(client.DownloadClip(member.greeting_audio, clip =>
-                {
-                    if (target != null && clip != null)
-                        target.greetingClip = clip;
-                }));
-            }
         }
     }
 }

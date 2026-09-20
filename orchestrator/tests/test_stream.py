@@ -197,21 +197,41 @@ def test_delivery_markup_never_reaches_the_transcript():
 
 # ------------------------------------------------------------------ pre-warm
 
-def test_warming_opens_the_conversation_so_the_first_turn_does_not():
+def test_warming_opens_the_conversation_and_returns_the_greeting_once():
     async def go():
         speech, sockets = provider()
         try:
             session = uuid4()
-            assert await speech.warm(turn(session))
+            hello = await speech.warm(turn(session))
             assert len(sockets) == 1 and not sockets[0].turns
-            assert await speech.warm(turn(session))          # idempotent
+            again = await speech.warm(turn(session))         # already said hello
             out = await speech.respond(turn(session))
-            return out, len(sockets)
+            return hello, again, out, len(sockets)
         finally:
             await speech.aclose()
-    out, opened = run(go())
+    hello, again, out, opened = run(go())
     assert opened == 1
+    # The character's opening line, in their live voice, as one playable clip.
+    assert hello.media_type == "audio/wav" and hello.audio[:4] == b"RIFF"
+    assert hello.sample_rate == 16000 and hello.agent_transcript == "¡Hola!"
+    assert hello.user_transcript is None and hello.timings_ms["open"] >= 0
+    assert again is None
     assert out.timings_ms["session_open"] == 0
+    assert out.agent_transcript == "Claro, joven."           # the greeting is not in the reply
+
+
+def test_a_turn_that_arrives_before_warm_drops_the_greeting():
+    """The learner spoke straight away, over the opening line; nobody gets to hear it later."""
+    async def go():
+        speech, sockets = provider()
+        try:
+            session = uuid4()
+            out = await speech.respond(turn(session))
+            return out, await speech.warm(turn(session))
+        finally:
+            await speech.aclose()
+    out, hello = run(go())
+    assert out.agent_transcript == "Claro, joven." and hello is None
 
 
 def test_every_variable_a_prompt_uses_is_always_sent():
@@ -389,6 +409,10 @@ def test_warm_endpoint_and_classic_endpoint_report_timings():
     speech, sockets = provider()
     with client_with(speech) as client:
         session = uuid4()
+        hello = client.post(f"/v1/speech/sessions/{session}/warm?npc_id=maria")
+        assert hello.status_code == 200 and hello.json()["agent_transcript"] == "¡Hola!"
+        assert base64.b64decode(hello.json()["audio_base64"])[:4] == b"RIFF"
+        assert "open;dur=" in hello.headers["server-timing"]
         assert client.post(f"/v1/speech/sessions/{session}/warm?npc_id=maria").status_code == 204
         assert len(sockets) == 1
         reply = client.post(f"/v1/speech?session_id={session}&npc_id=maria&sample_rate=16000"

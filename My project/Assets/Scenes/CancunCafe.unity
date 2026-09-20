@@ -725,7 +725,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   fileName: quests.json
   watchFile: 1
-  saveOnChange: 1
 --- !u!114 &1900000003
 MonoBehaviour:
   m_ObjectHideFlags: 0

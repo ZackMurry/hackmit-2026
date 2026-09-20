@@ -107,6 +107,10 @@ class Session:
     starts: list = field(default_factory=list)
     last_text: str = ""
     last_gesture: str | None = None
+    # The character's opening line, spoken by the agent the moment its conversation
+    # opens. Held until `warm` hands it to the client; a turn that arrives first means
+    # the learner spoke over it, and it is dropped.
+    greeting: tuple[bytes, str] | None = None
 
 
 class ElevenLabsSpeech:
@@ -344,8 +348,10 @@ class ElevenLabsSpeech:
                 # Set when the socket opens, which is why talking to Maria first and
                 # then walking to Luis lets him mention what you ordered.
                 "user_order": order}}))
-        # The teammate's agents greet first; exclude that greeting from the reply.
-        await self._turn(session, greeting=True)
+        # The agent speaks first. Keep its opening line for `warm` to return, and keep
+        # it out of the first reply.
+        audio, text = await self._turn(session, greeting=True)
+        session.greeting = (audio, text) if audio else None
         if session.rate is None:
             raise ValueError("Agent did not negotiate its output format")
         if request.scenario:
@@ -395,15 +401,18 @@ class ElevenLabsSpeech:
         session.context = context
         return int((time.monotonic() - began) * 1000)
 
-    async def warm(self, request: SpeechInput) -> bool:
-        """Open the conversation before the learner speaks, so their first turn is as
-        fast as every other one. Called when the player walks up to a character, while
-        the pre-recorded greeting plays. `request.audio` is ignored. False when a turn
-        is already running, which means the session is warm anyway."""
+    async def warm(self, request: SpeechInput) -> SpeechOutput | None:
+        """Open the conversation before the learner speaks and return the character's
+        opening line, in their own live voice. Called when the player walks up. The
+        learner's first turn then costs the same as every other one. `request.audio`
+        is ignored. None when there is nothing to say: the conversation was already
+        open (the greeting has been given, or a turn is running), or the agent opened
+        without speaking."""
         npc_id, agent, session = self._session_for(request)
         if session.lock.locked():
-            return False
+            return None
         async with session.lock:
+            began = time.monotonic()
             try:
                 # The first transcription after a quiet spell takes well over a second;
                 # later ones take a third of that. Spend that second now, on silence.
@@ -415,7 +424,13 @@ class ElevenLabsSpeech:
                 raise
             finally:
                 session.touched = time.monotonic()
-        return True
+            greeting, session.greeting = session.greeting, None
+        if greeting is None:
+            return None
+        audio, text = greeting
+        return SpeechOutput(wav_bytes(audio, session.rate), "audio/wav", session.rate, None,
+                            spoken_text(text),
+                            timings_ms={"open": int((time.monotonic() - began) * 1000)})
 
     async def _warm_hearing(self):
         with suppress(Exception):
@@ -455,6 +470,7 @@ class ElevenLabsSpeech:
                        "low_confidence_words": list(heard.low_confidence_words),
                        "min_logprob": heard.min_logprob}
 
+                session.greeting = None  # spoken over, if it was ever heard
                 previous_heard = await self._interrupted(session, request.interrupted_at_ms)
                 # Discard unsolicited idle messages before sending the next turn.
                 while not session.queue.empty():

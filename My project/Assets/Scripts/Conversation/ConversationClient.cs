@@ -109,8 +109,7 @@ public class ConversationClient : MonoBehaviour
         public string[] aliases;
         public string name;
         public string role;
-        public string greeting;        // opening line, same wording as greeting_audio
-        public string greeting_audio;  // server path of the pre-recorded WAV, or null
+        public string greeting;        // opening line: what the character says on Warm()
         public string[] actions;
         public bool ready;             // false = no agent configured for this character
     }
@@ -178,12 +177,7 @@ public class ConversationClient : MonoBehaviour
             yield break;
         }
 
-        string url = $"{Base}/v1/speech?session_id={turn.sessionId}&npc_id={UnityWebRequest.EscapeURL(turn.npcId)}&response_format=json";
-        if (!string.IsNullOrEmpty(scenarioId))
-            url += "&scenario_id=" + UnityWebRequest.EscapeURL(scenarioId);
-        url += "&run_id=" + RunId;
-        if (!string.IsNullOrEmpty(learnerName))
-            url += "&learner_name=" + UnityWebRequest.EscapeURL(learnerName);
+        string url = $"{Base}/v1/speech?session_id={turn.sessionId}&npc_id={UnityWebRequest.EscapeURL(turn.npcId)}&response_format=json" + RunQuery;
 
         using var req = new UnityWebRequest(url, "POST")
         {
@@ -199,15 +193,87 @@ public class ConversationClient : MonoBehaviour
             yield break;
         }
 
-        SpeechResponse parsed = null;
-        try { parsed = JsonUtility.FromJson<SpeechResponse>(req.downloadHandler.text); } catch { }
-        if (parsed == null)
+        Reply reply = null;
+        yield return ParseReply(req.downloadHandler.text, r => reply = r);
+        if (reply == null)
         {
             onError?.Invoke("server sent malformed reply");
             yield break;
         }
 
         TurnsSent++;
+        Received?.Invoke(reply);
+        onDone?.Invoke(reply);
+    }
+
+    /// <summary>
+    /// Open the character's conversation before the player speaks and get their opening
+    /// line, said live in their own voice. <paramref name="onDone"/> gets the greeting as a
+    /// <see cref="Reply"/> (no <c>heard</c>), or null when the conversation was already open
+    /// and has said hello. Exactly one of <paramref name="onDone"/> / <paramref name="onError"/> is called.
+    /// </summary>
+    public IEnumerator Warm(string sessionId, string npcId, Action<Reply> onDone, Action<string> onError)
+    {
+        if (!IsOnline)
+        {
+            onDone?.Invoke(null);
+            yield break;
+        }
+
+        string url = $"{Base}/v1/speech/sessions/{sessionId}/warm?npc_id={UnityWebRequest.EscapeURL(npcId)}" + RunQuery;
+        using var req = new UnityWebRequest(url, "POST")
+        {
+            downloadHandler = new DownloadHandlerBuffer(),
+            timeout = timeoutSeconds,
+        };
+        yield return req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
+        {
+            onError?.Invoke(Describe(req));
+            yield break;
+        }
+        if (req.responseCode == 204)
+        {
+            onDone?.Invoke(null);
+            yield break;
+        }
+
+        Reply reply = null;
+        yield return ParseReply(req.downloadHandler.text, r => reply = r);
+        if (reply == null)
+        {
+            onError?.Invoke("server sent malformed greeting");
+            yield break;
+        }
+        onDone?.Invoke(reply);
+    }
+
+    /// <summary>Query string shared by every request about this visit.</summary>
+    string RunQuery
+    {
+        get
+        {
+            string q = "&run_id=" + RunId;
+            if (!string.IsNullOrEmpty(scenarioId))
+                q += "&scenario_id=" + UnityWebRequest.EscapeURL(scenarioId);
+            if (!string.IsNullOrEmpty(learnerName))
+                q += "&learner_name=" + UnityWebRequest.EscapeURL(learnerName);
+            return q;
+        }
+    }
+
+    /// <summary>A speech JSON body into a <see cref="Reply"/> with its audio decoded; null if malformed.</summary>
+    static IEnumerator ParseReply(string json, Action<Reply> onDone)
+    {
+        SpeechResponse parsed = null;
+        try { parsed = JsonUtility.FromJson<SpeechResponse>(json); } catch { }
+        if (parsed == null)
+        {
+            onDone(null);
+            yield break;
+        }
+
         var reply = new Reply
         {
             heard = parsed.user_transcript ?? "",
@@ -223,8 +289,7 @@ public class ConversationClient : MonoBehaviour
             if (bytes != null)
                 yield return Decode(bytes, parsed.media_type, parsed.sample_rate, c => reply.clip = c);
         }
-        Received?.Invoke(reply);
-        onDone?.Invoke(reply);
+        onDone(reply);
     }
 
     /// <summary>What the director has ticked for this run so far; exactly one callback is called.</summary>
@@ -336,28 +401,6 @@ public class ConversationClient : MonoBehaviour
             onError?.Invoke("server sent malformed cast");
         else
             onDone?.Invoke(cast);
-    }
-
-    /// <summary>Download a server audio file (e.g. a pre-recorded greeting) as a clip; null on failure.</summary>
-    public IEnumerator DownloadClip(string serverPath, Action<AudioClip> onDone)
-    {
-        if (!IsOnline || string.IsNullOrEmpty(serverPath))
-        {
-            onDone?.Invoke(null);
-            yield break;
-        }
-        string url = serverPath.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? serverPath : Base + serverPath;
-        using var req = UnityWebRequest.Get(url);
-        req.timeout = 15;
-        yield return req.SendWebRequest();
-        if (req.result != UnityWebRequest.Result.Success)
-        {
-            Debug.LogWarning($"ConversationClient: could not fetch {url}: {Describe(req)}");
-            onDone?.Invoke(null);
-            yield break;
-        }
-        string mediaType = (req.GetResponseHeader("Content-Type") ?? "audio/wav").Split(';')[0].Trim();
-        yield return Decode(req.downloadHandler.data, mediaType, 0, onDone);
     }
 
     /// <summary>Turn the server's audio into a clip: WAV and raw PCM in-process, other containers via Unity's decoder.</summary>

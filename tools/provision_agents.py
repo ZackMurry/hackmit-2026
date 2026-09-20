@@ -1,4 +1,4 @@
-"""Create or update the scenario's ElevenLabs agents, tools and greeting audio.
+"""Create or update the scenario's ElevenLabs agents and tools.
 
 Idempotent: run it as often as you like. Everything is looked up by name, so the
 second run updates in place instead of making duplicates, and the agent ids stay
@@ -7,7 +7,6 @@ stable. There is no local state file to drift out of date.
     uv run python tools/provision_agents.py            # show what would change
     uv run python tools/provision_agents.py --apply    # create/update for real
     uv run python tools/provision_agents.py --apply --write-env
-    uv run python tools/provision_agents.py --apply --greetings   # also render audio
     uv run python tools/provision_agents.py --apply --tts v3      # characters without
                                                                   # their own tts_model
     uv run python tools/provision_agents.py --selftest-v3 luis    # throwaway agent,
@@ -18,14 +17,12 @@ Every --apply ends by reading each agent back and printing a table of what was a
 for against what the API stored, because several settings here are silently dropped
 when misspelt rather than rejected.
 
-Creating agents and tools costs no conversation minutes. Rendering greetings costs
-a few hundred TTS credits, once.
+Creating agents and tools costs no conversation minutes.
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import os
 import re
@@ -445,73 +442,6 @@ def selftest_v3(pack: ScenePack, tool_ids: dict[str, str], npc_id: str,
         print(f"  deleted throwaway {agent_id}")
 
 
-async def _capture_greeting(agent_id: str) -> tuple[bytes, int]:
-    """Record the character's opening line straight from the agent.
-
-    The standalone text-to-speech endpoint refuses Voice Library voices on the free
-    plan (HTTP 402 "Free users cannot use library voices via the API"), and it would
-    anyway be a second rendering that could drift from the live voice. Opening one
-    short conversation gives the real thing, with the agent's own voice settings.
-    """
-    import base64
-    import wave as wavelib
-    from io import BytesIO
-
-    from websockets.asyncio.client import connect
-
-    signed = call("GET", f"/v1/convai/conversation/get-signed-url?agent_id={agent_id}")
-    pcm, rate, deadline = bytearray(), 16000, asyncio.get_running_loop().time() + 25
-    async with connect(signed["signed_url"], max_size=16 * 1024 * 1024) as ws:
-        # Always send every dynamic variable the prompts mention: a missing one makes
-        # the whole conversation fail rather than degrade.
-        await ws.send(json.dumps({
-            "type": "conversation_initiation_client_data",
-            "dynamic_variables": dict(PLACEHOLDER_VARIABLES)}))
-        while True:
-            remaining = deadline - asyncio.get_running_loop().time()
-            if remaining <= 0:
-                break
-            try:
-                message = json.loads(await asyncio.wait_for(ws.recv(), remaining))
-            except (TimeoutError, Exception):
-                break
-            kind = message.get("type")
-            if kind == "conversation_initiation_metadata":
-                fmt = message["conversation_initiation_metadata_event"]["agent_output_audio_format"]
-                rate = int(fmt.removeprefix("pcm_"))
-            elif kind == "ping":
-                await ws.send(json.dumps({"type": "pong",
-                                          "event_id": message["ping_event"]["event_id"]}))
-            elif kind == "audio":
-                pcm.extend(base64.b64decode(message["audio_event"]["audio_base_64"]))
-                deadline = asyncio.get_running_loop().time() + 1.5  # quiet = finished
-    buffer = BytesIO()
-    with wavelib.open(buffer, "wb") as out:
-        out.setnchannels(1)
-        out.setsampwidth(2)
-        out.setframerate(rate)
-        out.writeframes(bytes(pcm))
-    return buffer.getvalue(), rate
-
-
-def render_greetings(pack: ScenePack, agent_ids: dict[str, str], apply: bool) -> None:
-    out = (Path(pack.root) if pack.root else default_pack_dir()).resolve() / "greetings"
-    for npc in pack.scenario.npcs:
-        target = out / f"{npc.npc_id}.wav"
-        shown = target.relative_to(ROOT) if target.is_relative_to(ROOT) else target
-        if not apply:
-            print(f"  audio {npc.npc_id:14} {shown}")
-            continue
-        wav, rate = asyncio.run(_capture_greeting(agent_ids[npc.npc_id]))
-        seconds = (len(wav) - 44) / 2 / rate
-        if seconds < 0.3:
-            print(f"  audio {npc.npc_id:14} FAILED — no greeting audio captured")
-            continue
-        out.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(wav)
-        print(f"  audio {npc.npc_id:14} {shown}  ({seconds:.1f}s @ {rate} Hz)")
-
-
 def write_env(ids: dict[str, str]) -> None:
     path = ROOT / "orchestrator" / ".env"
     text = path.read_text() if path.exists() else ""
@@ -528,7 +458,6 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="actually create/update")
     parser.add_argument("--write-env", action="store_true", help="save ids to orchestrator/.env")
-    parser.add_argument("--greetings", action="store_true", help="render greeting audio")
     parser.add_argument("--pack", default=str(default_pack_dir()))
     parser.add_argument("--tts", choices=sorted(TTS_MODELS), default="flash",
                         help="voice model for characters with no tts_model of their own")
@@ -565,8 +494,6 @@ def main() -> int:
     if args.apply or args.verify:
         verified = verify_agents(pack, tool_ids, agent_ids, opts)
         print(f"\n  verification {'passed' if verified else 'FAILED — see DIFF rows above'}")
-    if args.greetings:
-        render_greetings(pack, agent_ids, args.apply)
 
     if args.apply and args.write_env:
         write_env(agent_ids)

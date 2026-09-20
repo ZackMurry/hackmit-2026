@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -25,6 +26,14 @@ public class FirstPersonController : MonoBehaviour
     public float pitchMin = -85f;
     public float pitchMax = 85f;
 
+    [Header("Eye level")]
+    [Tooltip("Once the NPC avatars are posed, raise or lower the camera to this bone's height on the " +
+             "tallest standing character, so the player meets them eye to eye instead of staring at a " +
+             "chest. Empty = leave the camera where the scene puts it.")]
+    public string eyeLevelBone = "Bip01 LEye";
+    [Tooltip("Seconds after the avatars load to wait for their idle mocap and feet grounding to settle before measuring.")]
+    public float eyeLevelSettleSeconds = 1.5f;
+
     [Header("Debug")]
     public bool logInput = false;
 
@@ -51,6 +60,49 @@ public class FirstPersonController : MonoBehaviour
     void Start()
     {
         LockCursor(true);
+        if (!string.IsNullOrEmpty(eyeLevelBone) && cameraTransform != null)
+            StartCoroutine(MatchEyeLevel());
+    }
+
+    /// <summary>
+    /// The avatars are 0.7 scale and the player 0.75, so nothing in the scene says how
+    /// tall anyone really ends up; measure it. Waits for every NPC avatar to load and
+    /// settle (mocap pose, feet grounding, our own drop onto the floor), then puts the
+    /// camera at the height of the highest eye bone found: a seated character's eyes
+    /// are lower, the standing ones are the reference.
+    /// </summary>
+    IEnumerator MatchEyeLevel()
+    {
+        var loaders = FindObjectsByType<NpcAvatarLoader>(FindObjectsSortMode.None);
+        float giveUp = Time.time + 10f;
+        while (Time.time < giveUp && (loaders.Length == 0 || System.Array.Exists(loaders, l => l.AvatarRoot == null)))
+        {
+            yield return null;
+            loaders = FindObjectsByType<NpcAvatarLoader>(FindObjectsSortMode.None);
+        }
+        yield return new WaitForSeconds(eyeLevelSettleSeconds);
+
+        float eyeY = float.MinValue;
+        foreach (var loader in loaders)
+        {
+            var eye = loader.FindBone(eyeLevelBone);
+            if (eye != null)
+                eyeY = Mathf.Max(eyeY, eye.position.y);
+        }
+        if (eyeY == float.MinValue)
+        {
+            Debug.LogWarning($"FirstPersonController: no NPC bone '{eyeLevelBone}' to match eye level to; camera left as is.");
+            yield break;
+        }
+
+        // Camera is a child, so convert the world height into our (scaled) local space
+        // and keep it inside the capsule.
+        float localY = (eyeY - transform.position.y) / Mathf.Max(transform.lossyScale.y, 0.0001f);
+        localY = Mathf.Clamp(localY, 0f, controller.height * 0.5f);
+        var local = cameraTransform.localPosition;
+        Debug.Log($"FirstPersonController: eye level {eyeY:F3} -> camera local y {local.y:F3} -> {localY:F3}");
+        local.y = localY;
+        cameraTransform.localPosition = local;
     }
 
     void Update()
