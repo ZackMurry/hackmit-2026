@@ -49,15 +49,17 @@ class Socket:
         self.closed = True
 
 
-def make_provider(**kwargs):
+def make_provider(hears=None, **kwargs):
     sockets, requests = [], []
+    # What Scribe says of each upload, in order; the last one repeats.
+    hears = list(hears or [{"text": "Quiero un café", "language_code": "spa"}])
 
     def handler(request):
         requests.append(request)
         if request.url.path.endswith("speech-to-text"):
             assert b"scribe_v2" in request.content
             assert b"RIFF" in request.content
-            return httpx.Response(200, json={"text": "Quiero un café"})
+            return httpx.Response(200, json=hears.pop(0) if len(hears) > 1 else hears[0])
         assert request.url.params["agent_id"] in {"agent-luis", "agent-maria"}
         return httpx.Response(200, json={"signed_url": "wss://example.invalid/signed"})
 
@@ -68,8 +70,30 @@ def make_provider(**kwargs):
 
     provider = ElevenLabsSpeech("test-key", {"luis": "agent-luis", "maria": "agent-maria"},
         client=httpx.AsyncClient(base_url="https://example.invalid", transport=httpx.MockTransport(handler)),
-        connect=connect, quiet=.005, idle_seconds=.05)
+        connect=connect, quiet=.005, idle_seconds=.05, languages=kwargs.pop("languages", ("es", "en")))
     return provider, sockets, requests
+
+
+def test_a_guess_outside_spanish_or_english_is_heard_again_as_spanish():
+    async def run():
+        provider, _, requests = make_provider(hears=[
+            {"text": "Uhm, qual è questa un burrito?", "language_code": "ita"},
+            {"text": "¿Cuánto cuesta un burrito?", "language_code": "spa"},
+            {"text": "How do I say tip?", "language_code": "eng"}])
+        try:
+            result = await provider.respond(turn())
+            assert result.user_transcript == "¿Cuánto cuesta un burrito?"
+            uploads = [r for r in requests if r.url.path.endswith("speech-to-text")]
+            assert len(uploads) == 2
+            assert b"language_code" not in uploads[0].content
+            assert b'name="language_code"\r\n\r\nes' in uploads[1].content
+            # English is fine as it is: one call, nothing pinned.
+            result = await provider.respond(turn())
+            assert result.user_transcript == "How do I say tip?"
+            assert len([r for r in requests if r.url.path.endswith("speech-to-text")]) == 3
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
 
 
 def turn(session=None, npc="luis", **kwargs):

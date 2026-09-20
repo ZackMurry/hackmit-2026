@@ -1,7 +1,10 @@
 """HTTP-turn adapter based on the signed-URL flow in tools/demo_beginner.py.
 
 Uploads are transcribed with ElevenLabs Scribe, then sent as user_message to the
-existing voice agent. The scripts remain standalone; importing them would load
+existing voice agent. Scribe guesses the language itself and a learner's accented
+Spanish is close enough to Italian or Portuguese to be heard as either, so a guess
+outside the scenario's language and English is thrown away and the clip transcribed
+again pinned to the target language. The scripts remain standalone; importing them would load
 credentials and (for the beginner demo) mutate shared agent configuration.
 """
 from __future__ import annotations
@@ -10,6 +13,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import os
 import time
 import wave
@@ -22,7 +26,12 @@ import httpx
 from .scene import RunState, ScenePack, default_pack_dir
 from .speech import SpeechInput, SpeechOutput, SpeechInputError, SpeechUnavailable
 
+log = logging.getLogger("orchestrator")
+
 MAX_REPLY = 10 * 1024 * 1024 - 44  # leave room for a WAV header
+# Scribe reports ISO-639-3; the scenario is written with two-letter codes.
+ISO_639 = {"spa": "es", "eng": "en", "ita": "it", "por": "pt", "fra": "fr", "deu": "de",
+           "cat": "ca", "glg": "gl", "ron": "ro", "nld": "nl", "jpn": "ja", "zho": "zh"}
 MAX_RUNS = 64
 MAX_ACTIONS_PER_TURN = 16
 
@@ -58,9 +67,15 @@ class Session:
 
 class ElevenLabsSpeech:
     def __init__(self, key: str, agents: dict[str, str], *, stt_model="scribe_v2",
-                 client=None, connect=None, quiet=1.4, idle_seconds=120, pack=None):
+                 client=None, connect=None, quiet=1.4, idle_seconds=120, pack=None,
+                 languages: tuple[str, ...] | None = None):
         self.agents = agents
         self.stt_model = stt_model
+        # What the learner may be heard speaking: the target language first, then
+        # English, since a learner falls back to it. None means take Scribe's word.
+        if languages is None and pack is not None:
+            languages = (pack.scenario.language, "en")
+        self.languages = tuple(dict.fromkeys(languages)) if languages else None
         self.http = client or httpx.AsyncClient(
             base_url="https://api.elevenlabs.io", headers={"xi-api-key": key}, timeout=30)
         self.connect = connect
@@ -96,16 +111,28 @@ class ElevenLabsSpeech:
                         raise ValueError("Empty WAV")
             except (wave.Error, EOFError, ValueError):
                 raise SpeechInputError("Upload a valid nonempty PCM WAV file") from None
-        result = await self.http.post("/v1/speech-to-text", data={
-            "model_id": self.stt_model, "tag_audio_events": "false", "diarize": "false"},
-            files={"file": ("input." + extensions[media], data, media)})
-        if result.status_code in {400, 422}:
-            raise SpeechInputError("ElevenLabs could not transcribe this audio")
-        result.raise_for_status()
-        text = result.json().get("text", "").strip()
+        upload = ("input." + extensions[media], data, media)
+        body = await self._scribe(upload)
+        heard = ISO_639.get(body.get("language_code") or "", body.get("language_code"))
+        if self.languages and heard and heard not in self.languages:
+            # Scribe drifts to a sibling language on accented speech: hear it again
+            # as the target language rather than answer to Italian.
+            log.info("Scribe heard %s; re-transcribing as %s", heard, self.languages[0])
+            body = await self._scribe(upload, language=self.languages[0])
+        text = body.get("text", "").strip()
         if not text:
             raise SpeechInputError("No speech was detected")
         return text
+
+    async def _scribe(self, upload: tuple, language: str | None = None) -> dict:
+        data = {"model_id": self.stt_model, "tag_audio_events": "false", "diarize": "false"}
+        if language:
+            data["language_code"] = language
+        result = await self.http.post("/v1/speech-to-text", data=data, files={"file": upload})
+        if result.status_code in {400, 422}:
+            raise SpeechInputError("ElevenLabs could not transcribe this audio")
+        result.raise_for_status()
+        return result.json()
 
     async def _handle_tool(self, session: Session, event: dict):
         """Answer a tool call at once and record what the scene should do.
