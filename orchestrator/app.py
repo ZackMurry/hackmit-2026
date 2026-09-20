@@ -105,6 +105,7 @@ def create_app(*, speech: SpeechProvider | None = None,
             "gestures": pack.scenario.gestures,
             "npcs": [{
                 "npc_id": npc.npc_id,
+                "aliases": npc.aliases,
                 "name": npc.name,
                 "role": npc.role,
                 "gender": npc.gender,

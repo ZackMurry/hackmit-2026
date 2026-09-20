@@ -1,5 +1,7 @@
 # Scenar.io — End-to-End Build Doc (HackMIT 2026)
 
+**Scenar.io combines photorealistic 3D environments, real-time conversational voice agents, and LLM-driven scenario generation to turn language learning into an interactive simulation of real-world conversations.**
+
 2026-09-19 · @Someone
 
 ## 0. How to read this doc

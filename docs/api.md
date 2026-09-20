@@ -48,8 +48,10 @@ curl http://127.0.0.1:8765/v1/npcs
 
 Returns the cast so the client does not hardcode anything: for each character an
 `npc_id` (send this as `npc_id`), `name`, `role`, `gender`, the `greeting` text, a
-`greeting_audio` URL, the scene `actions` it can trigger, and `ready` — false when no
-agent id is configured for it. Also returns the `menu`, the `goals` and the valid
+`greeting_audio` URL, the scene `actions` it can trigger, `aliases`, and `ready` —
+false when no agent id is configured for it. An alias is an older id that still
+resolves to the same character, so a client that has not been renamed keeps working;
+`mariana` currently resolves to `maria`. Also returns the `menu`, the `goals` and the valid
 `gestures`. 503 if no scenario pack is loaded.
 
 ```sh

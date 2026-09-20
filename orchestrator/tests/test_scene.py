@@ -215,3 +215,18 @@ def test_greeting_audio_is_served_when_present():
 def test_health_reports_the_loaded_pack():
     with TestClient(create_app(pack=ScenePack.load(PACK_DIR))) as client:
         assert client.get("/health").json()["scenario_pack"] == "cafe_cancun_v1"
+
+
+def test_alias_lets_an_older_client_id_keep_working(pack):
+    """Unity still calls the waitress 'mariana'; the scenario declares that alias."""
+    assert pack.resolve("mariana") == "maria"
+    assert pack.resolve("maria") == "maria"
+    assert pack.resolve("luis") == "luis"
+    assert pack.resolve("nobody") == "nobody"   # unknown ids pass through untouched
+
+
+def test_npcs_endpoint_exposes_aliases():
+    with TestClient(create_app(pack=ScenePack.load(PACK_DIR))) as client:
+        body = client.get("/v1/npcs").json()
+    maria = next(n for n in body["npcs"] if n["npc_id"] == "maria")
+    assert "mariana" in maria["aliases"]

@@ -10,6 +10,7 @@
   "npcs": [
     {
       "npc_id": "maria",
+      "aliases": ["mariana"],
       "name": "Maria",
       "role": "Waitress at Café Nader. You meet her first; she seats you with Luis and takes your order.",
       "gender": "female",

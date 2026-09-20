@@ -96,6 +96,9 @@ class TurnSpec(Model):
 
 class NpcSpec(Model):
     npc_id: Identifier
+    # Other ids a client may already be sending for this character. Lets a game
+    # client that predates a rename keep working instead of getting a 503.
+    aliases: list[Identifier] = []
     name: str
     role: str
     gender: Literal["female", "male", "other"]
@@ -144,6 +147,9 @@ class ScenarioFile(Model):
         ids = [n.npc_id for n in self.npcs]
         if len(set(ids)) != len(ids):
             raise ValueError("Duplicate npc_id in scenario")
+        names = list(ids) + [a for n in self.npcs for a in n.aliases]
+        if len(set(names)) != len(names):
+            raise ValueError("An alias collides with another character's id or alias")
         for npc in self.npcs:
             unknown = set(npc.tools) - set(self.tools)
             if unknown:
@@ -210,6 +216,13 @@ class ScenePack:
         self.prompts = prompts
         self.root = root
         self.npcs = {npc.npc_id: npc for npc in scenario.npcs}
+        self.by_any_name = {**{npc.npc_id: npc.npc_id for npc in scenario.npcs},
+                            **{alias: npc.npc_id
+                               for npc in scenario.npcs for alias in npc.aliases}}
+
+    def resolve(self, npc_id: str) -> str:
+        """Map whatever the client called a character to this scenario's id."""
+        return self.by_any_name.get(npc_id, npc_id)
 
     # -- loading ----------------------------------------------------------------
 

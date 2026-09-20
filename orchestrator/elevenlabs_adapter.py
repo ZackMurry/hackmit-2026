@@ -246,7 +246,10 @@ class ElevenLabsSpeech:
                 json.dumps(request.scenario, ensure_ascii=False)}))
 
     async def respond(self, request: SpeechInput) -> SpeechOutput:
-        agent = self.agents.get(request.npc_id)
+        # A client may still be using an older name for a character; the scenario
+        # declares those, so accept them rather than failing the turn.
+        npc_id = self.pack.resolve(request.npc_id) if self.pack else request.npc_id
+        agent = self.agents.get(npc_id) or self.agents.get(request.npc_id)
         if not agent:
             raise SpeechUnavailable("No ElevenLabs agent configured for this NPC")
         if self.reaper is None:
@@ -261,10 +264,10 @@ class ElevenLabsSpeech:
             raise SpeechInputError("A speech turn is already running for this session")
         async with session.lock:
             try:
-                session.npc_id = request.npc_id
+                session.npc_id = npc_id
                 session.run = self._run_state(request.run_id or str(request.session_id))
                 text = await self._transcribe(request)
-                context = (request.npc_id, request.scenario_id)
+                context = (npc_id, request.scenario_id)
                 if session.ws is None or session.context != context or session.reader.done():
                     await self._close(session)
                     await self._open(session, agent, request)
