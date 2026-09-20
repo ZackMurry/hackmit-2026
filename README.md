@@ -100,6 +100,27 @@ Flip `status` to `"done"` (from code via `QuestManager.Instance.Complete(id)`, o
 file) and the HUD ticks it off. `action` names the server scene action that completes the quest
 automatically. Quest completion is also a trigger for NPC moves.
 
+### `scores.json` — the report card
+
+The episode ends when every quest is done (the server's scene actions tick them) or when the
+player presses **Q**. `EpisodeSummary` (on the `Quests` object) then releases the cursor, closes
+the NPC sessions and shows a report card: an overall grade plus A+…F per quest for language
+performance, with one line of feedback each. The scoring API doesn't exist yet, so the grades
+are read from `scores.json`, which is the shape it should return:
+
+```json
+{
+  "overall": "",
+  "summary": "One paragraph of overall feedback.",
+  "scores": [
+    { "id": "order", "grade": "A", "comment": "«Quiero un café de olla, por favor» — clear request form." }
+  ]
+}
+```
+
+`id` is the quest id; an empty `overall` is averaged from the quest grades (4.3 scale); quests
+without an entry show `—`. **R** on the report card resets the quests and restarts the scene.
+
 ### `npcs.json`
 
 `NpcManager` spawns one NPC per entry with the full stack (avatar, idle mocap, look-at,

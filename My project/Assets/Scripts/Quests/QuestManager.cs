@@ -101,6 +101,23 @@ public class QuestManager : MonoBehaviour
     /// <summary>Mark a quest done. Returns false if the id is unknown.</summary>
     public bool Complete(string id) => SetStatus(id, Quest.Done);
 
+    /// <summary>Put every quest back to todo (new episode).</summary>
+    public void ResetAll()
+    {
+        bool changed = false;
+        foreach (var quest in Quests.quests)
+            if (quest.status != Quest.Todo)
+            {
+                quest.status = Quest.Todo;
+                changed = true;
+            }
+        if (!changed)
+            return;
+        if (saveOnChange)
+            Save();
+        Changed?.Invoke();
+    }
+
     /// <summary>Mark every quest whose <see cref="Quest.action"/> is this scene action done. Returns false if none matched.</summary>
     public bool CompleteByAction(string action)
     {

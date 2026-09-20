@@ -135,6 +135,12 @@ public class ConversationClient : MonoBehaviour
             Debug.Log("ConversationClient: no serverUrl set; NPCs will answer with canned lines.");
     }
 
+    void OnDestroy()
+    {
+        if (Instance == this)
+            Instance = null;
+    }
+
     /// <summary>Send one turn; exactly one of <paramref name="onDone"/> / <paramref name="onError"/> is called.</summary>
     public IEnumerator Send(Turn turn, Action<Reply> onDone, Action<string> onError)
     {

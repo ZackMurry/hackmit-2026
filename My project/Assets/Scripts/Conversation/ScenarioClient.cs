@@ -117,6 +117,8 @@ public class ScenarioClient : MonoBehaviour
     {
         if (NpcManager.Instance != null)
             NpcManager.Instance.Changed -= ApplyCharacters;
+        if (Instance == this)
+            Instance = null;
     }
 
     /// <summary>Fetch the configured scenario (saved id, remembered id, or generate) and apply it.</summary>
