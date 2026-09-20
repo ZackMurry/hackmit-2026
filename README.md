@@ -34,7 +34,7 @@ CancunCafe, the worked example of a generated trip; the receipt at the end sends
 `POST /v1/scenarios`.
 
 Nothing in the scene is an art asset. `LowPoly` builds flat-shaded meshes whose faces each pick
-one swatch of a ten-colour palette texture: the Earth is an icosphere (20,480 faces, each under
+one swatch of a nine-colour palette texture: the Earth is an icosphere (20,480 faces, each under
 100 km) coloured by vote from NASA's land/sea map (`Assets/Resources/Wish/earth_map.png`, public
 domain, read back as data) with coasts leaning land so peninsulas keep their shape, the clouds are squashed icospheres pushed together with flat undersides and
 faces shaded by which way they look, the pin is a small ball, and the sky is a dome with a

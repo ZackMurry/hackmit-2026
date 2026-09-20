@@ -113,14 +113,14 @@ public class Wish : MonoBehaviour
     readonly List<Mesh> meshes = new();
     Light sun;
 
-    // The clouds: a sea of them below, a few adrift above; on Enter they all stream past.
+    // The clouds: a sea of them below the globe; on Enter they all stream past. Nothing
+    // drifts above the horizon: a small distant cloud reads as a second globe.
     readonly List<Puff> puffs = new();
     System.Random cloudRng = new(11);
 
     class Puff
     {
         public Transform t;
-        public bool sea;      // part of the bank below, or one of the floaters
         public float drift;   // idle speed along x
         public float size;
     }
@@ -292,20 +292,18 @@ public class Wish : MonoBehaviour
         for (int i = 0; i < 5; i++)
             meshes.Add(LowPoly.Cloud(100 + i));
         for (int i = 0; i < 34; i++)
-            Spawn(true, true);
-        for (int i = 0; i < 9; i++)
-            Spawn(false, true);
+            Spawn(true);
     }
 
     float R(float lo, float hi) => lo + (float)cloudRng.NextDouble() * (hi - lo);
 
-    /// <summary>A cloud in the sea below or adrift above; <paramref name="anywhere"/> for the initial scatter, else far ahead.</summary>
-    Puff Spawn(bool sea, bool anywhere)
+    /// <summary>A cloud in the sea below; <paramref name="anywhere"/> for the initial scatter, else far ahead.</summary>
+    Puff Spawn(bool anywhere)
     {
         var go = new GameObject("Cloud");
         go.transform.SetParent(transform, false);
         go.transform.rotation = Quaternion.Euler(0f, R(-40f, 40f), 0f);
-        var puff = new Puff { t = go.transform, sea = sea, drift = R(0.10f, 0.22f), size = sea ? R(0.9f, 1.7f) : R(0.45f, 1.0f) };
+        var puff = new Puff { t = go.transform, drift = R(0.10f, 0.22f), size = R(0.9f, 1.7f) };
         go.transform.localScale = Vector3.one * puff.size;
         var mr = Piece(go, meshes[cloudRng.Next(meshes.Count)], cloudMaterial);
         mr.shadowCastingMode = ShadowCastingMode.Off;
@@ -317,9 +315,7 @@ public class Wish : MonoBehaviour
     void Reset(Puff p, bool anywhere)
     {
         float z = anywhere ? R(-3f, 15f) : R(14f, 19f);
-        p.t.position = p.sea
-            ? new Vector3(R(-10f, 10f), R(-2.7f, -1.8f), z)
-            : new Vector3(R(-10f, 10f), R(0.4f, 3.4f), z);
+        p.t.position = new Vector3(R(-10f, 10f), R(-2.7f, -1.8f), z);
     }
 
     /// <summary>Idle: everything drifts. Boarding: everything streams past, converging on the camera.</summary>
@@ -337,8 +333,7 @@ public class Wish : MonoBehaviour
             var pos = p.t.position;
             pos.x += p.drift * dt;
             pos.z -= rush * dt;
-            if (p.sea)
-                pos.y += dLift;
+            pos.y += dLift;
             if (pos.x > 11f)
                 pos.x -= 22f;
             if (pos.z < camZ - 2.5f)
@@ -347,15 +342,15 @@ public class Wish : MonoBehaviour
                 Reset(p, false);
                 pos = p.t.position;
                 pos.x = Mathf.Lerp(pos.x, R(-2.5f, 2.5f), cover);
-                pos.y = p.sea ? pos.y + seaLift : Mathf.Lerp(pos.y, R(-1.5f, 1.8f), cover);
+                pos.y = Mathf.Lerp(pos.y + seaLift, R(-1.5f, 1.8f), cover);
             }
             p.t.position = pos;
         }
         // More clouds the deeper in you are, so the view fills before the wash.
-        int want = 43 + Mathf.RoundToInt(Mathf.InverseLerp(0.3f, 0.9f, cover) * 22f);
+        int want = 34 + Mathf.RoundToInt(Mathf.InverseLerp(0.3f, 0.9f, cover) * 30f);
         while (puffs.Count < want)
         {
-            var extra = Spawn(cloudRng.NextDouble() < 0.5, false);
+            var extra = Spawn(false);
             extra.t.position = new Vector3(R(-3f, 3f), R(-1.5f, 2f), extra.t.position.z);
         }
     }
@@ -417,7 +412,7 @@ public class Wish : MonoBehaviour
         placeName = name;
         hasPin = true;
         var marker = new GameObject("Pin");
-        Piece(marker, LowPoly.Ball(LowPoly.Swatch.Ink), cloudMaterial);
+        Piece(marker, LowPoly.Ball(LowPoly.Swatch.Cloud), cloudMaterial);   // white, unlit, like the clouds
         pin = marker.transform;
         pin.SetParent(globe, false);
         pin.localPosition = PinLocal(lat, lon) * (globeRadius * 1.005f);

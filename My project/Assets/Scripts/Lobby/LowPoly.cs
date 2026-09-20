@@ -10,7 +10,7 @@ using UnityEngine;
 /// </summary>
 public static class LowPoly
 {
-    public enum Swatch { Ocean, Sand, Grass, Forest, Rock, Snow, Cloud, CloudShade, CloudUnder, Ink, Count }
+    public enum Swatch { Ocean, Sand, Grass, Forest, Rock, Snow, Cloud, CloudShade, CloudUnder, Count }
 
     static readonly Color[] Palette =
     {
@@ -20,10 +20,9 @@ public static class LowPoly
         new(0.27f, 0.52f, 0.33f),   // Forest
         new(0.62f, 0.55f, 0.46f),   // Rock
         new(0.96f, 0.97f, 0.98f),   // Snow
-        new(1.00f, 1.00f, 1.00f),   // Cloud, lit from above
+        new(1.00f, 1.00f, 1.00f),   // Cloud, lit from above; also the pin
         new(0.86f, 0.91f, 0.98f),   // Cloud, sides
         new(0.72f, 0.80f, 0.92f),   // Cloud, underside
-        new(0.09f, 0.10f, 0.13f),   // Ink: the pin, matching the type
     };
 
     static Texture2D palette;
