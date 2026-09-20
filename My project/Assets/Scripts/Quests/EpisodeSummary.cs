@@ -29,6 +29,9 @@ public class EpisodeSummary : MonoBehaviour
     public Key endKey = Key.Q;
     [Tooltip("Restarts the scene from the receipt.")]
     public Key restartKey = Key.R;
+    [Tooltip("Back to the Scenar.io departures desk for another trip.")]
+    public Key newTripKey = Key.N;
+    public string departuresScene = "Assets/Scenes/Departures.unity";
 
     [Header("Receipt")]
     [Tooltip("Printed header lines. The first is the café's name.")]
@@ -125,7 +128,9 @@ public class EpisodeSummary : MonoBehaviour
                 End();
         }
         else if (keyboard[restartKey].wasPressedThisFrame)
-            Restart();
+            Restart(SceneManager.GetActiveScene().path);
+        else if (keyboard[newTripKey].wasPressedThisFrame)
+            Restart(departuresScene);
     }
 
     bool AllDone()
@@ -210,21 +215,20 @@ public class EpisodeSummary : MonoBehaviour
             }));
     }
 
-    void Restart()
+    void Restart(string scenePath)
     {
         quests.ResetAll();
         Cursor.lockState = CursorLockMode.Locked;
         Cursor.visible = false;
-        var scene = SceneManager.GetActiveScene();
 #if UNITY_EDITOR
-        // Scenes not listed in Build Settings (CancunCafe isn't) can still be reloaded in the editor this way.
-        if (scene.buildIndex < 0)
+        // Scenes not listed in Build Settings (CancunCafe isn't) can still be loaded in the editor this way.
+        if (SceneUtility.GetBuildIndexByScenePath(scenePath) < 0)
         {
-            UnityEditor.SceneManagement.EditorSceneManager.LoadSceneInPlayMode(scene.path, new LoadSceneParameters(LoadSceneMode.Single));
+            UnityEditor.SceneManagement.EditorSceneManager.LoadSceneInPlayMode(scenePath, new LoadSceneParameters(LoadSceneMode.Single));
             return;
         }
 #endif
-        SceneManager.LoadScene(scene.buildIndex);
+        SceneManager.LoadScene(scenePath);
     }
 
     /// <summary>scores.json, for playing without a server. It grades everything, so only the quests the player actually reached are kept.</summary>
@@ -472,7 +476,7 @@ public class EpisodeSummary : MonoBehaviour
 
         y += line * 0.2f;
         Text("¡Gracias por tu visita!", centred, ink);
-        Text($"Pulsa {restartKey} para otra ronda", smallCentred, faintInk);
+        Text($"Pulsa {restartKey} para otra ronda · {newTripKey} para otro viaje", smallCentred, faintInk);
         y += Pad;
 
         // The grade is the total; the stamp says whether the bill is settled.
