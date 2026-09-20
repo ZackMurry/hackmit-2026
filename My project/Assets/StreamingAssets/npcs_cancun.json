@@ -23,6 +23,30 @@
           "endYaw": 270
         },
         {
+          "id": "leave_to_settle",
+          "trigger": "move",
+          "after": "to_table",
+          "delay": 3,
+          "path": [
+            { "x": 3.6, "y": -1.5, "z": 10.4 },
+            { "x": 0.0, "y": -1.5, "z": 10.5 },
+            { "x": -0.2, "y": -1.5, "z": 13.8 }
+          ],
+          "endYaw": 180
+        },
+        {
+          "id": "return_for_order",
+          "trigger": "move",
+          "after": "leave_to_settle",
+          "delay": 20,
+          "path": [
+            { "x": 0.0, "y": -1.5, "z": 10.5 },
+            { "x": 3.6, "y": -1.5, "z": 10.4 },
+            { "x": 3.9, "y": -1.5, "z": 9.8 }
+          ],
+          "endYaw": 270
+        },
+        {
           "id": "back_to_counter",
           "trigger": "action",
           "after": "serve_order",

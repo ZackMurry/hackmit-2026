@@ -216,11 +216,12 @@ along +z; it opens onto the sand along its +x side: a doorway at the south-east 
 
 The player spawns on the sand outside the south-east doorway facing the café. Maria (waitress)
 waits just inside; when the player walks up she greets them ("Tu amigo ya está en la mesa. Ven
-conmigo"), then walks up the aisle to the table (`"trigger": "greet"`) and waits there. Luis is
-already seated at `table_a` (`"seat"`); the free chair opposite is `table_b` — press **F** to sit.
-Look at Maria and hold **E** to order; when the server reports `serve_order` the `order` quest
-ticks and she heads back to the counter (`"trigger": "action"`). Then hold **E** facing Luis to
-chat — he knows what you ordered. The characters, prompts, menu and greeting audio live in
+conmigo"), then walks up the aisle to the table (`"trigger": "greet"`). Luis is already seated
+at `table_a` (`"seat"`); the free chair opposite is `table_b` — press **F** to sit. Maria leaves
+you to settle in (`"trigger": "move"` after `to_table`) and comes back from the counter 20 s later
+to take the order. Look at her and hold **E**; when the server reports `serve_order` the `order`
+quest ticks and she heads back to the counter (`"trigger": "action"`). Then hold **E** facing
+Luis to chat — he knows what you ordered. The characters, prompts, menu and greeting audio live in
 `scenarios/cafe_cancun/` (see `docs/api.md`). Avatars: `Avatars/Female_Adult_08` and
 `Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
 
