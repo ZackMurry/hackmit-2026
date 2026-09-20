@@ -270,10 +270,12 @@ curl http://127.0.0.1:8765/v1/runs/visit-1/goals
 
 ```json
 {"run_id": "visit-1", "reviewing": false, "goals": [
+  {"id": "introduce", "label": "Introduce yourself to Maria", "core": true, "npc_id": "maria",
+   "achieved": true, "evidence_quote": "Hola, me llamo Zack."},
+  {"id": "hometown", "label": "Tell Luis where you're from", "core": true, "npc_id": "luis",
+   "achieved": false, "evidence_quote": null},
   {"id": "order", "label": "Order something in Spanish", "core": true, "npc_id": "maria",
-   "achieved": true, "evidence_quote": "Quiero un café de olla y una concha, por favor."},
-  {"id": "ask_price", "label": "Ask what something costs, before being told", "core": true,
-   "npc_id": "maria", "achieved": false, "evidence_quote": null}]}
+   "achieved": false, "evidence_quote": null}]}
 ```
 
 Every `/v1/speech` turn that heard the learner schedules one review of the run *after*
@@ -306,17 +308,17 @@ an unattempted core goal is an F, an unattempted optional one is left out), and
 `summary` is two or three sentences addressed to the learner, in English.
 
 ```json
-{"overall": "B-", "goals_passed": 3, "goals_total": 6,
+{"overall": "B+", "goals_passed": 2, "goals_total": 3,
  "scenario_id": null, "run_id": "visit-1",
  "scores": [
+   {"id": "introduce", "grade": "A", "evidence_quote": "Hola, me llamo Zack.",
+    "comment": "You introduced yourself right at the door: «hola, me llamo Zack»."},
+   {"id": "hometown", "grade": null, "evidence_quote": null,
+    "comment": "You never got round to telling Luis where you're from."},
    {"id": "order", "grade": "A",
     "evidence_quote": "Quiero un café de olla y una concha, por favor.",
-    "comment": "You ordered clearly: «quiero un café de olla y una concha, por favor»."},
-   {"id": "ask_price", "grade": "D-", "evidence_quote": null,
-    "comment": "You never asked what it cost; Maria told you the total."},
-   {"id": "curveball", "grade": null, "evidence_quote": null,
-    "comment": "Maria did not ask you a clarifying question this time."}],
- "summary": "You ordered naturally and asked Luis a real follow-up about the turtles. Next time ask the price before Maria says it, and reach for «¿cómo?» instead of English when you lose the thread."}
+    "comment": "You ordered clearly: «quiero un café de olla y una concha, por favor»."}],
+ "summary": "Confident from the door to the order. Next time tell Luis where you're from when he asks, and try a follow-up about his turtles."}
 ```
 
 The letters sit on the scale the client averages with: F is 0, D- is 0.7, then 0.3 a

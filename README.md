@@ -52,8 +52,8 @@ offline.
 
 ## Goals and grading
 
-A scenario carries goals — "order something in Spanish", "ask a follow-up about something Luis
-said". Two separate things happen with them, and the characters know about neither: an actor who
+A scenario carries goals — the café has three, in the order the visit runs: introduce yourself
+to Maria, tell Luis where you're from, order something in Spanish. Two separate things happen with them, and the characters know about neither: an actor who
 is also grading you talks like an examiner, so Maria and Luis are never told.
 
 **During the run** the server's director ticks goals from speech. After every `/v1/speech`

@@ -1,12 +1,9 @@
 {
   "overall": "",
-  "summary": "Natural, polite ordering and a real back-and-forth with Luis. Next time ask the price before Maria tells you, and reach for «¿mande?» when you lose the thread instead of switching to English.",
+  "summary": "Friendly and clear from the door to the order. You introduced yourself, told Luis about home in full sentences, and ordered without pointing. Next time try a follow-up question when Luis mentions the turtles.",
   "scores": [
-    { "id": "order",      "grade": "A",  "comment": "«Quiero un café de olla y una concha, por favor» — clear request form, no pointing." },
-    { "id": "ask_price",  "grade": "C+", "comment": "You asked «¿cuánto es?» only after Maria said the total." },
-    { "id": "small_talk", "grade": "B+", "comment": "Four exchanges with full clauses; a couple of one-word answers in the middle." },
-    { "id": "follow_up",  "grade": "A-", "comment": "«¿Y las tortugas salen todas las noches?» picked up Luis's turtle patrol." },
-    { "id": "curveball",  "grade": "B",  "comment": "«¿Para tomar aquí o para llevar?» answered in Spanish after a pause." },
-    { "id": "repair",     "grade": "D",  "comment": "Switched to English once when you missed a word; try «¿cómo?» or «más despacio, por favor»." }
+    { "id": "introduce", "grade": "A",  "comment": "«Hola, me llamo Zack» — right at the door, no hesitation." },
+    { "id": "hometown",  "grade": "B+", "comment": "«Soy de Missouri, en los Estados Unidos» — a full clause, then you let Luis carry it." },
+    { "id": "order",     "grade": "A",  "comment": "«Quiero un café de olla y una concha, por favor» — clear request form, no pointing." }
   ]
 }

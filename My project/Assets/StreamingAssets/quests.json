@@ -1,11 +1,8 @@
 {
   "title": "Café Nader",
   "quests": [
-    { "id": "order",      "text": "Order something in Spanish",              "status": "todo", "action": "serve_order" },
-    { "id": "ask_price",  "text": "Ask what it costs before you're told",     "status": "todo" },
-    { "id": "small_talk", "text": "Chat with Luis for three exchanges",       "status": "todo" },
-    { "id": "follow_up",  "text": "Ask a follow-up about what Luis said",     "status": "todo" },
-    { "id": "curveball",  "text": "Answer Maria's quick question (bonus)",    "status": "todo" },
-    { "id": "repair",     "text": "Recover in Spanish when lost (bonus)",     "status": "todo" }
+    { "id": "introduce", "text": "Introduce yourself to Maria",  "status": "todo" },
+    { "id": "hometown",  "text": "Tell Luis where you're from",   "status": "todo" },
+    { "id": "order",     "text": "Order something in Spanish",    "status": "todo", "action": "serve_order" }
   ]
 }

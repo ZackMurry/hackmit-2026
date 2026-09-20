@@ -114,7 +114,7 @@ def test_grade_falls_back_to_the_loaded_pack(tmp_path):
         if result.status_code == 422:
             pytest.skip("No scenario pack is loaded in this environment")
         assert result.status_code == 200
-        assert [goal.id for goal in grader.calls[0][0]][:1] == ["order"]
+        assert [goal.id for goal in grader.calls[0][0]] == ["introduce", "hometown", "order"]
 
 
 @pytest.mark.parametrize("payload", [

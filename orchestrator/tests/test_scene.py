@@ -198,7 +198,7 @@ def test_npcs_endpoint_describes_the_cast():
     assert by_id["luis"]["actions"] == ["play_gesture"]
     assert by_id["maria"]["ready"] is False        # no agent configured in tests
     assert len(body["menu"]) == 10
-    assert len(body["goals"]) == 6
+    assert [g["id"] for g in body["goals"]] == ["introduce", "hometown", "order"]
 
 
 def test_greeting_audio_is_served_when_present():
