@@ -14,8 +14,8 @@ Generated world models + immersive language learning
 
 ## The front — `Wish`
 
-Play starts in `Assets/Scenes/Wish.unity`: the Scenar.io wordmark, one sentence with two blanks,
-and a wireframe globe.
+Play starts in `Assets/Scenes/Wish.unity`: the clouds open onto the Scenar.io wordmark, one
+sentence with two blanks, and the Earth sitting in a cloud bank against a cumulus sky.
 
     Put me in ______________________.
     I speak it [a little].
@@ -23,16 +23,28 @@ and a wireframe globe.
 Finishing the sentence is the whole configuration. The first blank is one typed line (empty, it
 shows the example, "a café in Cancún, ordering breakfast"); the second is one word — *barely · a
 little · comfortably · well*, CEFR A1–B2 — changed by clicking it or with ↑/↓. Name a place the
-globe knows (Cancún, CDMX, Madrid, Buenos Aires, Paris… see `Wish.Places`) and a pin drops and the
-globe turns to face you. Enter: the sentence fades, the globe rushes up to the pin and dissolves,
-and in its place a room drafts itself in line by line — floor, walls, window, counter, table, two
-chairs — while a few words say what is happening (scouting the place, World Labs Marble building
-the world, ElevenLabs casting the locals, writing your three goals, go). Then the screen fades
-into `destinationScene`. Today every sentence lands in CancunCafe, the worked example of a
-generated trip; the receipt at the end sends you back with **N**. The line and level are kept in
-PlayerPrefs (`Wish.LastLine`, `LastLevel`) for when generation is wired to `POST /v1/scenarios`.
-The globe and room are `LineRenderer`s built at start (no assets); type is IMGUI; colours,
-example, levels, timing and destination are fields on the `Wish` component.
+globe knows (Cancún, CDMX, Madrid, Buenos Aires, Paris… see `Wish.Places`) and a pin lands on it
+and the globe turns to face you. Enter: the sentence fades, the globe swings the pin round and
+rushes up to it while the clouds close in — the wisps thicken, the bank climbs, the screen goes
+nearly white — and where the sentence was, a few words say what is happening (scouting the place,
+World Labs Marble building the world, ElevenLabs casting the locals, writing your three goals,
+go). `destinationScene` loads behind the white and the clouds part onto the spawn. Today every
+sentence lands in CancunCafe, the worked example of a generated trip; the receipt at the end
+sends you back with **N**. The line and level are kept in PlayerPrefs (`Wish.LastLine`,
+`LastLevel`) for when generation is wired to `POST /v1/scenarios`.
+
+Assets, under `Assets/Resources/Wish/`: `sky.jpg` is the Poly Haven HDRI
+*kloofendal_48d_partly_cloudy_puresky* (CC0), tonemapped and set as a `Skybox/Panoramic` at
+runtime; `earth.jpg` is NASA's Blue Marble *land_shallow_topo* with the *cloud_combined* layer
+screened on (public domain), on a UV sphere built in `Wish.SphereMesh` under a URP Lit material
+and one directional light. The clouds in front are `CloudCurtain`: two drifting layers of wisps
+and a bank along the bottom, tileable fBm noise generated once at start and drawn with IMGUI
+on top of every camera. The curtain is `DontDestroyOnLoad`, which is how the white-out carries
+across the scene load: `Reveal()` holds white until `sceneLoaded`, then parts over ~3 s and
+destroys itself; `Arrive()` is the same in reverse when the front starts. Type is IMGUI in a
+sans the OS has (`Wish.PickFont`; a face that isn't installed is what produces "Can't generate
+mesh, no font asset"); colours, example, levels, timing, sky heading and destination are fields
+on the `Wish` component.
 
 ## Talking to NPCs
 

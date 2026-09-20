@@ -4,27 +4,27 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
+using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// The front of Scenar.io: one sentence with two blanks, and a globe.
+/// The front of Scenar.io: one sentence with two blanks, and the Earth in the clouds.
 ///
 ///     Put me in ______________________.
 ///     I speak it [a little].
 ///
 /// You finish the sentence; that is the whole configuration. Name a place and a pin
-/// drops on the wireframe globe and it turns to face you. Enter: the globe rushes up
-/// to the pin and dissolves, and in its place a room drafts itself in line by line,
-/// the way a world comes out of World Labs Marble — floor, walls, window, counter,
-/// table, two chairs — while a few words say what is being done (scouting, building,
-/// casting the voices, writing the goals). Then the room is real: the destination
-/// scene loads.
+/// lands on the globe and it turns to face you. Enter: the globe swings the pin round
+/// and rushes up to it while the clouds close in, until the screen is nearly white and
+/// a few words say what is being done (scouting, building, casting the voices, writing
+/// the goals). The destination loads behind the white, and the clouds part onto the
+/// spawn (<see cref="CloudCurtain"/>).
 ///
 /// Every sentence lands in <see cref="destinationScene"/> for now; Café Nader is the
 /// worked example of a generated trip. The sentence and level are kept in PlayerPrefs
 /// (<see cref="LastLine"/>, <see cref="LastLevel"/>) for when generation is wired to
-/// <c>POST /v1/scenarios</c>. Type is IMGUI; the globe and room are LineRenderers
-/// built at start, so nothing here needs an asset.
+/// <c>POST /v1/scenarios</c>. The sky is a Poly Haven HDRI and the Earth a NASA Blue
+/// Marble, both under <c>Resources/Wish</c>; the type is IMGUI.
 /// </summary>
 public class Wish : MonoBehaviour
 {
@@ -45,13 +45,14 @@ public class Wish : MonoBehaviour
     public int defaultLevel = 1;
 
     [Header("Look")]
-    public Color backdrop = new(0.043f, 0.051f, 0.071f);
-    public Color type = Color.white;
+    [Tooltip("Type colour; dark, since the sky is bright.")]
+    public Color ink = new(0.09f, 0.10f, 0.13f);
     [Tooltip("Blank underline, level word, pin.")]
     public Color accent = new(1f, 0.49f, 0.25f);
-    [Tooltip("Globe and room wireframe.")]
-    public Color wire = new(0.45f, 0.62f, 0.75f, 0.3f);
-    public Vector3 globeCentre = new(2.0f, -0.35f, 0f);
+    [Tooltip("Heading of the sky panorama, degrees.")]
+    public float skyRotation = 0f;
+    public float skyExposure = 1.15f;
+    public Vector3 globeCentre = new(2.0f, -0.15f, 0f);
     public float globeRadius = 1.7f;
     [Tooltip("Degrees per second the globe idles at before a place is named.")]
     public float idleSpin = 5f;
@@ -59,7 +60,10 @@ public class Wish : MonoBehaviour
     [Header("Timing")]
     [Tooltip("Seconds from Enter to the scene load. The stages are spaced across it.")]
     public float tripSeconds = 8f;
-    public float fadeSeconds = 0.8f;
+    [Tooltip("Seconds the clouds take to open onto this scene when it starts.")]
+    public float arriveSeconds = 2.4f;
+    [Tooltip("Seconds the clouds take to part onto the destination's spawn.")]
+    public float revealSeconds = 3.2f;
 
     [Serializable]
     public class Level
@@ -97,7 +101,7 @@ public class Wish : MonoBehaviour
         ("montreal", "Montréal, Canada", 45.50f, -73.57f),
     };
 
-    /// <summary>What is said while the room drafts in, as fractions of the trip.</summary>
+    /// <summary>What is said while the clouds close in, as fractions of the trip.</summary>
     static readonly (float at, string title, string sub)[] Stages =
     {
         (0.00f, "Scouting {0}", "reading your line for where you are and who's there"),
@@ -106,8 +110,8 @@ public class Wish : MonoBehaviour
         (0.61f, "Writing your three goals", "small enough to finish in one visit"),
         (0.79f, "Go.", "walk up to anyone and press E to talk"),
     };
-    // Fractions of the trip: the globe rushes in and fades, the room drafts itself.
-    const float ZoomFrom = 0.11f, ZoomTo = 0.30f, DraftFrom = 0.19f, DraftTo = 0.58f;
+    // Fractions of the trip: the globe rushes up to the pin; the clouds close over it.
+    const float ZoomFrom = 0.11f, ZoomTo = 0.34f, CoverFrom = 0.11f, CoverTo = 0.64f;
 
     enum Phase { Writing, Boarding, Departing }
 
@@ -119,20 +123,16 @@ public class Wish : MonoBehaviour
 
     // The globe.
     Transform globe;
-    readonly List<(LineRenderer line, float alpha)> globeLines = new();
-    LineRenderer pin;
+    Transform pin;
     float yaw, yawTarget;
     bool hasPin;
     string placeName = "";
     float pinLat, pinLon;
 
-    // The room.
-    Transform room;
-    readonly List<(LineRenderer line, Vector3 a, Vector3 b)> roomLines = new();
-    float roomSpin;
-
-    Material wireMaterial;
+    Material skyMaterial, earthMaterial, pinMaterial;
+    Light sun;
     Camera cam;
+    CloudCurtain curtain;
 
     // Type, laid out on a 1280×720 canvas and scaled to the window.
     const float DesignW = 1280f, DesignH = 720f;
@@ -153,18 +153,19 @@ public class Wish : MonoBehaviour
         Cursor.visible = true;
         cam = Camera.main;
 
-        var shader = Shader.Find("Sprites/Default") ?? Shader.Find("Universal Render Pipeline/Unlit");
-        wireMaterial = new Material(shader);
+        Sky();
         BuildGlobe();
-        BuildRoom();
-        SetAlpha(roomLines, 0f);
         yaw = yawTarget = 40f;
+
+        curtain = CloudCurtain.Get();
+        curtain.Arrive(arriveSeconds);
     }
 
     void OnDestroy()
     {
-        if (wireMaterial != null)
-            Destroy(wireMaterial);
+        foreach (var m in new[] { skyMaterial, earthMaterial, pinMaterial })
+            if (m != null)
+                Destroy(m);
     }
 
     // ---- the trip -------------------------------------------------------------------
@@ -172,17 +173,12 @@ public class Wish : MonoBehaviour
     void Update()
     {
         if (phase == Phase.Boarding && Since >= tripSeconds)
-        {
-            phase = Phase.Departing;
-            phaseStart = Time.time;
-        }
-        else if (phase == Phase.Departing && Since >= fadeSeconds)
-            Load();
+            Depart();
 
         float t = Trip;
 
         // Globe: idle spin until a place is named, then turn it to face you; on Enter,
-        // rush up to the pin and fade out.
+        // bring the pin round and rush up to it.
         if (phase == Phase.Writing)
             yawTarget = hasPin ? pinLon + 25f : yawTarget + idleSpin * Time.deltaTime; // pin a little left of centre, toward the sentence
         else
@@ -191,22 +187,19 @@ public class Wish : MonoBehaviour
         globe.rotation = Quaternion.Euler(-12f, 0f, 0f) * Quaternion.Euler(0f, yaw, 0f);
 
         float zoom = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(ZoomFrom, ZoomTo, t));
-        float scale = Mathf.Lerp(1f, 4f, zoom);
+        float scale = Mathf.Lerp(1f, 3.5f, zoom);
         globe.localScale = Vector3.one * scale;
         // Slide the globe so the pin ends up in front of the camera as it grows.
         var pinWorldDir = globe.rotation * PinLocal(pinLat, pinLon);
-        var zoomed = new Vector3(0.6f, -0.1f, 0f) - pinWorldDir * globeRadius * scale;
+        var zoomed = new Vector3(0.4f, -0.2f, 0f) - pinWorldDir * globeRadius * scale;
         globe.position = Vector3.Lerp(globeCentre, zoomed, zoom);
-        SetAlpha(globeLines, 1f - zoom);
-        if (pin != null)
-            Tint(pin, accent, 1f - zoom);
 
-        // Room: drafts itself in line by line while the stages read out.
-        float draft = Mathf.InverseLerp(DraftFrom, DraftTo, t);
-        roomSpin += (phase == Phase.Writing ? 0f : 9f) * Time.deltaTime;
-        room.rotation = Quaternion.Euler(-24f, 0f, 0f) * Quaternion.Euler(0f, roomSpin, 0f);
-        Draft(draft);
-        SetAlpha(roomLines, Mathf.Clamp01(draft * 4f));
+        if (pin != null)
+            pin.localScale = Vector3.one * (0.075f + 0.02f * Mathf.Sin(Time.time * 4f));
+
+        // The clouds close in as the trip goes on (and open again if you change your mind).
+        if (curtain != null && phase != Phase.Departing)
+            curtain.Cover = phase == Phase.Writing ? 0f : Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(CoverFrom, CoverTo, t));
     }
 
     void Go()
@@ -227,15 +220,19 @@ public class Wish : MonoBehaviour
     void ChangeMind()
     {
         phase = Phase.Writing;
-        roomSpin = 0f;
         Place(Line); // put the pin back where the text says, or nowhere
     }
 
-    void Load()
+    /// <summary>White out, load the destination behind it, and let the clouds part onto it.</summary>
+    void Depart()
     {
         if (loading)
             return;
         loading = true;
+        phase = Phase.Departing;
+        phaseStart = Time.time;
+        if (curtain != null)
+            curtain.Reveal(revealSeconds);
         Debug.Log($"Wish: landing in {destinationScene}");
 #if UNITY_EDITOR
         // The destination isn't in Build Settings; in the editor it can still be loaded by path.
@@ -248,7 +245,40 @@ public class Wish : MonoBehaviour
         SceneManager.LoadScene(destinationScene);
     }
 
-    // ---- the globe ------------------------------------------------------------------
+    // ---- the sky and the globe ------------------------------------------------------
+
+    void Sky()
+    {
+        var panorama = Resources.Load<Texture2D>("Wish/sky");
+        var shader = Shader.Find("Skybox/Panoramic");
+        if (panorama != null && shader != null)
+        {
+            skyMaterial = new Material(shader);
+            skyMaterial.SetTexture("_MainTex", panorama);
+            skyMaterial.SetFloat("_Mapping", 1f);       // latitude/longitude layout
+            skyMaterial.EnableKeyword("_MAPPING_LATITUDE_LONGITUDE_LAYOUT");
+            skyMaterial.DisableKeyword("_MAPPING_6_FRAMES_LAYOUT");
+            skyMaterial.SetFloat("_ImageType", 0f);     // 360°
+            skyMaterial.SetFloat("_Rotation", skyRotation);
+            skyMaterial.SetFloat("_Exposure", skyExposure);
+            RenderSettings.skybox = skyMaterial;
+            if (cam != null)
+                cam.clearFlags = CameraClearFlags.Skybox;
+        }
+        else
+            Debug.LogWarning("Wish: no sky (Resources/Wish/sky or the Skybox/Panoramic shader is missing)");
+
+        // Daylight from up and to the right, and a soft blue fill so the night side isn't black.
+        RenderSettings.ambientMode = AmbientMode.Flat;
+        RenderSettings.ambientLight = new Color(0.60f, 0.66f, 0.78f);
+        sun = new GameObject("Sun").AddComponent<Light>();
+        sun.transform.SetParent(transform, false);
+        sun.type = LightType.Directional;
+        sun.color = new Color(1f, 0.97f, 0.92f);
+        sun.intensity = 1.5f;
+        sun.shadows = LightShadows.None;
+        sun.transform.rotation = Quaternion.Euler(28f, -38f, 0f);
+    }
 
     void BuildGlobe()
     {
@@ -256,27 +286,67 @@ public class Wish : MonoBehaviour
         globe.SetParent(transform, false);
         globe.position = globeCentre;
 
-        const int n = 96;
-        var ring = new Vector3[n];
-        // Meridians: six great circles through the poles.
-        for (int m = 0; m < 6; m++)
+        var earth = new GameObject("Earth");
+        earth.transform.SetParent(globe, false);
+        earth.transform.localScale = Vector3.one * globeRadius;
+        earth.AddComponent<MeshFilter>().sharedMesh = SphereMesh(96, 48);
+        var renderer = earth.AddComponent<MeshRenderer>();
+        renderer.shadowCastingMode = ShadowCastingMode.Off;
+        renderer.receiveShadows = false;
+        earthMaterial = new Material(Shader.Find("Universal Render Pipeline/Lit") ?? Shader.Find("Standard"));
+        var map = Resources.Load<Texture2D>("Wish/earth");
+        if (map != null)
         {
-            var turn = Quaternion.AngleAxis(-m * 30f, Vector3.up); // same sense as PinLocal's longitude
-            for (int i = 0; i < n; i++)
+            earthMaterial.SetTexture("_BaseMap", map);
+            earthMaterial.SetTexture("_MainTex", map);   // in case the fallback shader is what we got
+        }
+        else
+            Debug.LogWarning("Wish: no Earth texture at Resources/Wish/earth");
+        earthMaterial.SetFloat("_Smoothness", 0.3f);
+        earthMaterial.SetFloat("_Metallic", 0f);
+        renderer.sharedMaterial = earthMaterial;
+
+        pinMaterial = new Material(Shader.Find("Universal Render Pipeline/Unlit") ?? Shader.Find("Unlit/Color"));
+        pinMaterial.SetColor("_BaseColor", accent);
+        pinMaterial.SetColor("_Color", accent);
+    }
+
+    /// <summary>
+    /// A UV sphere whose longitude 0 faces the camera and whose texture reads the right
+    /// way round from outside: u runs with longitude (−180…180 → 0…1), v with latitude.
+    /// </summary>
+    static Mesh SphereMesh(int segments, int rings)
+    {
+        var verts = new Vector3[(rings + 1) * (segments + 1)];
+        var uv = new Vector2[verts.Length];
+        for (int i = 0; i <= rings; i++)
+        {
+            float lat = -90f + 180f * i / rings;
+            for (int j = 0; j <= segments; j++)
             {
-                float a = i * 2f * Mathf.PI / n;
-                ring[i] = turn * new Vector3(0f, Mathf.Sin(a), -Mathf.Cos(a)) * globeRadius;
+                float lon = -180f + 360f * j / segments;
+                int k = i * (segments + 1) + j;
+                verts[k] = PinLocal(lat, lon);
+                uv[k] = new Vector2(j / (float)segments, i / (float)rings);
             }
-            globeLines.Add((Wire(globe, wire, 0.008f, true, ring), wire.a));
         }
-        // Parallels: equator (a touch brighter) and ±30°, ±60°.
-        foreach (float lat in new[] { -60f, -30f, 0f, 30f, 60f })
-        {
-            for (int i = 0; i < n; i++)
-                ring[i] = PinLocal(lat, i * 360f / n) * globeRadius;
-            float a = lat == 0f ? wire.a * 1.6f : wire.a;
-            globeLines.Add((Wire(globe, new Color(wire.r, wire.g, wire.b, a), lat == 0f ? 0.011f : 0.008f, true, ring), a));
-        }
+        var tris = new int[rings * segments * 6];
+        int n = 0;
+        for (int i = 0; i < rings; i++)
+            for (int j = 0; j < segments; j++)
+            {
+                int a = i * (segments + 1) + j, b = a + 1, c = a + segments + 1, d = c + 1;
+                // Clockwise seen from outside: Unity's front face.
+                tris[n++] = a; tris[n++] = c; tris[n++] = d;
+                tris[n++] = a; tris[n++] = d; tris[n++] = b;
+            }
+        var mesh = new Mesh { name = "Earth" };
+        mesh.SetVertices(verts);
+        mesh.SetNormals(verts);   // unit sphere: the position is the normal
+        mesh.SetUVs(0, uv);
+        mesh.SetTriangles(tris, 0);
+        mesh.RecalculateBounds();
+        return mesh;
     }
 
     /// <summary>Unit vector for a latitude/longitude; longitude 0 faces the camera.</summary>
@@ -320,8 +390,13 @@ public class Wish : MonoBehaviour
         pinLon = lon;
         placeName = name;
         hasPin = true;
-        var dir = PinLocal(lat, lon);
-        pin = Wire(globe, accent, 0.03f, false, dir * globeRadius, dir * (globeRadius + 0.22f));
+        var marker = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        marker.name = "Pin";
+        Destroy(marker.GetComponent<Collider>());
+        marker.GetComponent<MeshRenderer>().sharedMaterial = pinMaterial;
+        pin = marker.transform;
+        pin.SetParent(globe, false);
+        pin.localPosition = PinLocal(lat, lon) * (globeRadius * 1.005f);
     }
 
     static string Plain(string s)
@@ -333,131 +408,25 @@ public class Wish : MonoBehaviour
         return sb.ToString();
     }
 
-    // ---- the room -------------------------------------------------------------------
-
-    void BuildRoom()
-    {
-        room = new GameObject("Room").transform;
-        room.SetParent(transform, false);
-        room.position = new Vector3(0.2f, -0.85f, 0f);
-        room.localScale = Vector3.one * 0.36f;
-
-        // Drafting order: floor, walls, ceiling, window, counter, table, chairs.
-        const float w = 3f, d = 2.5f, h = 2.8f;
-        Seg(new(-w, 0, -d), new(w, 0, -d)); Seg(new(w, 0, -d), new(w, 0, d));
-        Seg(new(w, 0, d), new(-w, 0, d)); Seg(new(-w, 0, d), new(-w, 0, -d));
-        foreach (var (x, z) in new[] { (-w, -d), (w, -d), (w, d), (-w, d) })
-            Seg(new(x, 0, z), new(x, h, z));
-        Seg(new(-w, h, -d), new(w, h, -d)); Seg(new(w, h, -d), new(w, h, d));
-        Seg(new(w, h, d), new(-w, h, d)); Seg(new(-w, h, d), new(-w, h, -d));
-        Quad(new(-2.3f, 1.0f, d), new(-0.5f, 1.0f, d), new(-0.5f, 2.2f, d), new(-2.3f, 2.2f, d));   // window
-        Box(0.4f, 0f, 1.7f, 2.6f, 1.0f, 2.35f);                                                      // counter
-        Box(-1.7f, 0.72f, -0.8f, -0.7f, 0.78f, 0.2f);                                                 // table top
-        foreach (var (x, z) in new[] { (-1.62f, -0.72f), (-0.78f, -0.72f), (-0.78f, 0.12f), (-1.62f, 0.12f) })
-            Seg(new(x, 0, z), new(x, 0.72f, z));                                                      // legs
-        Chair(-2.4f, -0.3f, +1); Chair(0.0f, -0.3f, -1);
-    }
-
-    void Seg(Vector3 a, Vector3 b) => roomLines.Add((Wire(room, wire, 0.02f, false, a, a), a, b));
-
-    void Quad(Vector3 a, Vector3 b, Vector3 c, Vector3 d)
-    {
-        Seg(a, b); Seg(b, c); Seg(c, d); Seg(d, a);
-    }
-
-    void Box(float x0, float y0, float z0, float x1, float y1, float z1)
-    {
-        Quad(new(x0, y0, z0), new(x1, y0, z0), new(x1, y0, z1), new(x0, y0, z1));
-        Quad(new(x0, y1, z0), new(x1, y1, z0), new(x1, y1, z1), new(x0, y1, z1));
-        Seg(new(x0, y0, z0), new(x0, y1, z0)); Seg(new(x1, y0, z0), new(x1, y1, z0));
-        Seg(new(x1, y0, z1), new(x1, y1, z1)); Seg(new(x0, y0, z1), new(x0, y1, z1));
-    }
-
-    /// <summary>A seat with a back on the side away from the table (<paramref name="facing"/> = ±1 along x).</summary>
-    void Chair(float x, float z, int facing)
-    {
-        const float s = 0.22f;
-        Box(x - s, 0.42f, z - s, x + s, 0.47f, z + s);
-        foreach (var (dx, dz) in new[] { (-s, -s), (s, -s), (s, s), (-s, s) })
-            Seg(new(x + dx, 0, z + dz), new(x + dx, 0.42f, z + dz));
-        float bx = x - facing * s;
-        Quad(new(bx, 0.47f, z - s), new(bx, 0.47f, z + s), new(bx, 0.95f, z + s), new(bx, 0.95f, z - s));
-    }
-
-    /// <summary>Draw the room up to <paramref name="p"/> of the way, the current line part-way.</summary>
-    void Draft(float p)
-    {
-        int n = roomLines.Count;
-        for (int i = 0; i < n; i++)
-        {
-            float f = Mathf.Clamp01(p * n - i);
-            var (lr, a, b) = roomLines[i];
-            lr.SetPosition(1, Vector3.Lerp(a, b, f));
-            lr.enabled = f > 0f;
-        }
-    }
-
-    // ---- lines ----------------------------------------------------------------------
-
-    LineRenderer Wire(Transform parent, Color color, float width, bool loop, params Vector3[] points)
-    {
-        var go = new GameObject("line");
-        go.transform.SetParent(parent, false);
-        var lr = go.AddComponent<LineRenderer>();
-        lr.useWorldSpace = false;
-        lr.loop = loop;
-        lr.material = wireMaterial;
-        lr.widthMultiplier = width;
-        lr.numCapVertices = 2;
-        lr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-        lr.receiveShadows = false;
-        lr.positionCount = points.Length;
-        lr.SetPositions(points);
-        Tint(lr, color, 1f);
-        return lr;
-    }
-
-    static void Tint(LineRenderer lr, Color color, float alpha)
-    {
-        var c = new Color(color.r, color.g, color.b, color.a * alpha);
-        lr.startColor = lr.endColor = c;
-    }
-
-    void SetAlpha(List<(LineRenderer line, float alpha)> lines, float alpha)
-    {
-        foreach (var (lr, baseAlpha) in lines)
-            lr.startColor = lr.endColor = new Color(wire.r, wire.g, wire.b, baseAlpha * alpha);
-    }
-
-    void SetAlpha(List<(LineRenderer line, Vector3 a, Vector3 b)> lines, float alpha)
-    {
-        foreach (var (lr, _, _) in lines)
-            lr.startColor = lr.endColor = new Color(wire.r, wire.g, wire.b, wire.a * 2.2f * alpha);
-    }
-
     // ---- type -----------------------------------------------------------------------
 
     void OnGUI()
     {
         EnsureStyles();
         HandleKeys();
+        GUI.depth = -200;   // over the clouds
 
         var prevMatrix = GUI.matrix;
         var prevColor = GUI.color;
         float scale = Mathf.Min(Screen.width / DesignW, Screen.height / DesignH);
         GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
-        float w = Screen.width / scale, h = Screen.height / scale;
+        float w = Screen.width / scale;
 
         Wordmark(w);
         Sentence(1f - Mathf.Clamp01(Trip * tripSeconds / 0.6f));
         PinLabel(scale);
         if (phase != Phase.Writing)
-            Status(w);
-        if (phase == Phase.Departing)
-        {
-            GUI.color = new Color(0f, 0f, 0f, Mathf.Clamp01(Since / fadeSeconds));
-            GUI.DrawTexture(new Rect(0f, 0f, w, h), Texture2D.whiteTexture);
-        }
+            Status();
 
         GUI.matrix = prevMatrix;
         GUI.color = prevColor;
@@ -488,13 +457,13 @@ public class Wish : MonoBehaviour
         var b = new GUIContent(".io");
         float aw = wordmark.CalcSize(a).x, bw = wordmark.CalcSize(b).x;
         var row = new Rect((w - aw - bw) / 2f, 54f, aw, 84f);
-        wordmark.normal.textColor = type;
+        wordmark.normal.textColor = ink;
         GUI.Label(row, a, wordmark);
         row.x += aw;
         row.width = bw;
         wordmark.normal.textColor = accent;
         GUI.Label(row, b, wordmark);
-        tagline.normal.textColor = new Color(type.r, type.g, type.b, 0.5f);
+        tagline.normal.textColor = new Color(ink.r, ink.g, ink.b, 0.6f);
         GUI.Label(new Rect(0f, 138f, w, 24f), "A world for whatever you need to say.", tagline);
     }
 
@@ -504,14 +473,14 @@ public class Wish : MonoBehaviour
             return;
         const float x = 96f, width = 600f;
         float y = 262f;
-        var ink = new Color(type.r, type.g, type.b, alpha);
-        var faint = new Color(type.r, type.g, type.b, 0.38f * alpha);
+        var dark = new Color(ink.r, ink.g, ink.b, alpha);
+        var faint = new Color(ink.r, ink.g, ink.b, 0.42f * alpha);
         var orange = new Color(accent.r, accent.g, accent.b, alpha);
 
-        Text(new Rect(x, y, width, 46f), "Put me in", sentence, ink);
+        Text(new Rect(x, y, width, 46f), "Put me in", sentence, dark);
         y += 60f;
 
-        // The blank: typed straight onto the dark, underlined in the accent.
+        // The blank: typed straight onto the sky, underlined in the accent.
         var blankRect = new Rect(x, y, width, 46f);
         if (phase == Phase.Writing)
         {
@@ -526,7 +495,7 @@ public class Wish : MonoBehaviour
                 GUI.FocusControl("blank");
         }
         else
-            Text(blankRect, Line, blank, ink);
+            Text(blankRect, Line, blank, dark);
         GUI.color = orange;
         GUI.DrawTexture(new Rect(x, y + 50f, width, 2f), Texture2D.whiteTexture);
         GUI.color = Color.white;
@@ -536,10 +505,10 @@ public class Wish : MonoBehaviour
         string lead = "I speak it ";
         float leadW = sentence.CalcSize(new GUIContent(lead)).x;
         float wordW = sentence.CalcSize(new GUIContent(LevelWord)).x;
-        Text(new Rect(x, y, leadW + 4f, 46f), lead, sentence, ink);
+        Text(new Rect(x, y, leadW + 4f, 46f), lead, sentence, dark);
         var wordRect = new Rect(x + leadW, y, wordW, 46f);
         Text(wordRect, LevelWord, sentence, orange);
-        Text(new Rect(wordRect.xMax, y, 40f, 46f), ".", sentence, ink);
+        Text(new Rect(wordRect.xMax, y, 40f, 46f), ".", sentence, dark);
         GUI.color = orange;
         for (float d = 0f; d < wordW; d += 8f)
             GUI.DrawTexture(new Rect(wordRect.x + d, y + 50f, 4f, 2f), Texture2D.whiteTexture);
@@ -555,18 +524,24 @@ public class Wish : MonoBehaviour
     /// <summary>Name the pinned place beside its pin, wherever the globe has turned it.</summary>
     void PinLabel(float scale)
     {
-        if (!hasPin || cam == null || Trip > ZoomFrom)
+        if (!hasPin || cam == null || pin == null || Trip > ZoomFrom)
             return;
-        var tip = globe.TransformPoint(PinLocal(pinLat, pinLon) * (globeRadius + 0.22f));
+        var tip = pin.position;
         // Only while the pin is on the near side; behind the globe it should not float.
         if (Vector3.Dot(tip - globe.position, cam.transform.forward) > 0f)
             return;
         var s = cam.WorldToScreenPoint(tip);
         var p = new Vector2(s.x / scale, (Screen.height - s.y) / scale);
-        Text(new Rect(p.x + 10f, p.y - 22f, 320f, 20f), placeName, pinLabel, new Color(type.r, type.g, type.b, 0.8f));
+        float tw = pinLabel.CalcSize(new GUIContent(placeName)).x;
+        var r = new Rect(p.x + 12f, p.y - 24f, tw + 16f, 22f);
+        GUI.color = new Color(1f, 1f, 1f, 0.85f);             // a small white tag, readable over the oceans
+        GUI.DrawTexture(r, Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        Text(new Rect(r.x + 8f, r.y, tw, r.height), placeName, pinLabel, ink);
     }
 
-    void Status(float w)
+    /// <summary>The stages read out where the sentence was, as the clouds close.</summary>
+    void Status()
     {
         float t = Trip;
         int i = 0;
@@ -575,8 +550,8 @@ public class Wish : MonoBehaviour
                 i = k;
         float a = Mathf.Clamp01((t - Stages[i].at) * tripSeconds / 0.5f);
         string title = string.Format(Stages[i].title, placeName == "the place" ? "the place" : placeName.Split(',')[0]);
-        Text(new Rect(0f, 200f, w, 56f), title, status, new Color(type.r, type.g, type.b, a), TextAnchor.MiddleCenter);
-        Text(new Rect(0f, 256f, w, 26f), Stages[i].sub, statusSub, new Color(type.r, type.g, type.b, 0.5f * a), TextAnchor.MiddleCenter);
+        Text(new Rect(96f, 262f, 720f, 56f), title, status, new Color(ink.r, ink.g, ink.b, a));
+        Text(new Rect(96f, 322f, 720f, 26f), Stages[i].sub, statusSub, new Color(ink.r, ink.g, ink.b, 0.6f * a));
     }
 
     static void Text(Rect r, string s, GUIStyle style, Color color, TextAnchor anchor = TextAnchor.MiddleLeft)
@@ -590,8 +565,7 @@ public class Wish : MonoBehaviour
     {
         if (wordmark != null)
             return;
-        sans = Font.CreateDynamicFontFromOSFont(
-            new[] { "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans", "DejaVu Sans" }, 16) ?? GUI.skin.font;
+        sans = PickFont(16);
 
         GUIStyle Plain(int size, FontStyle weight = FontStyle.Normal) =>
             new(GUI.skin.label) { font = sans, fontSize = size, fontStyle = weight, richText = false, wordWrap = false, padding = new RectOffset(0, 0, 0, 0) };
@@ -611,10 +585,29 @@ public class Wish : MonoBehaviour
         foreach (var state in new[] { blank.normal, blank.hover, blank.active, blank.focused, blank.onNormal, blank.onHover, blank.onActive, blank.onFocused })
         {
             state.background = null;
-            state.textColor = type;
+            state.textColor = ink;
         }
         GUI.skin.settings.cursorColor = accent;
         GUI.skin.settings.cursorFlashSpeed = 1.1f;
         GUI.skin.settings.selectionColor = new Color(accent.r, accent.g, accent.b, 0.35f);
+    }
+
+    /// <summary>
+    /// A sans the OS actually has, or Unity's built-in one. Asking for a face that isn't
+    /// installed gives a font with no glyphs ("Can't generate mesh, no font asset").
+    /// </summary>
+    static Font PickFont(int size)
+    {
+        var installed = new HashSet<string>(Font.GetOSInstalledFontNames() ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+        foreach (var name in new[] { "Helvetica Neue", "Arial", "Liberation Sans", "DejaVu Sans", "Noto Sans", "Segoe UI", "Roboto" })
+            if (installed.Contains(name))
+            {
+                var f = Font.CreateDynamicFontFromOSFont(name, size);
+                if (f != null && f.dynamic)
+                    return f;
+            }
+        Font builtin = null;
+        try { builtin = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf"); } catch (Exception) { }
+        return builtin != null ? builtin : GUI.skin.font;
     }
 }
