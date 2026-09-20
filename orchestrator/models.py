@@ -97,6 +97,9 @@ class TranscriptTurn(Model):
     role: Literal["learner", "npc", "event"]
     npc_id: Identifier
     text: Text
+    # Learner turns only: words the speech recogniser was unsure of. A "mistake" made of
+    # these words may be ours, not the learner's, so it is never shown to them.
+    low_confidence_words: Annotated[list[str], Field(max_length=40)] = []
 
 
 class GradeRequest(Model):
@@ -125,10 +128,37 @@ class GoalTick(Model):
     evidence_quote: Text
 
 
+MistakeCategory = Literal["gender_agreement", "verb_conjugation", "tense", "ser_estar",
+                          "por_para", "word_choice", "word_order", "register",
+                          "false_friend", "english_fallback", "other"]
+LearnerState = Literal["fine", "hesitant", "stuck", "distressed"]
+
+
+class Mistake(Model):
+    """Something the learner said that a native speaker would say differently. Logged
+    silently during the visit and never shown to them."""
+
+    quote: Text
+    correction: Text
+    category: MistakeCategory = "other"
+    explanation_en: Text
+    severity: Annotated[int, Field(ge=1, le=3)] = 1
+    # Set in code, never by the model: the quote overlaps words the recogniser doubted.
+    asr_suspect: bool = False
+
+
 class Verdict(Model):
-    """What the director returns after a turn: the open goals now met, if any."""
+    """What the director returns after a turn. `achieved` stays first so it is
+    generated first; everything after it has a default, so a provider that only
+    judges goals is still a valid director."""
 
     achieved: Annotated[list[GoalTick], Field(max_length=12)]
+    mistakes: Annotated[list[Mistake], Field(max_length=12)] = []
+    used_english: bool = False
+    used_repair_phrase: bool = False
+    learner_state: LearnerState = "fine"
+    # One silent stage direction for the character the learner is talking to, or None.
+    director_note: Annotated[str, Field(max_length=1000)] | None = None
 
 
 # The scale the client prints. Ordered worst to best; grading.py turns it into points.

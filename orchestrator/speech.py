@@ -27,6 +27,12 @@ class SpeechInput:
     run_id: str | None = None
     # Addresses the learner by name in the scenario's prompts.
     learner_name: str | None = None
+    # CEFR level (A1, A2, B1, B2): how simply and how fast the characters speak.
+    learner_level: str | None = None
+    # Set when the learner cut the previous reply short: how many milliseconds of it
+    # they actually heard before pressing talk. Lets the character know where it was
+    # interrupted instead of believing it finished the sentence.
+    interrupted_at_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -39,6 +45,17 @@ class SpeechOutput:
     # Scene actions the character triggered this turn, in order. The game client
     # plays them; the conversation never waits for it.
     actions: tuple[dict[str, Any], ...] = ()
+    # Mouth shapes for the whole reply: ({"t": start_ms, "d": duration_ms, "v": viseme}, ...)
+    visemes: tuple[dict[str, Any], ...] = ()
+    # Words the recogniser was unsure of: a hint at pronunciation, never a verdict.
+    low_confidence_words: tuple[str, ...] = ()
+    min_logprob: float | None = None
+    # Where the time went, in milliseconds, so latency is measured rather than claimed.
+    timings_ms: dict[str, int] | None = None
+    # True when the character ended the conversation (said goodbye and hung up).
+    ended: bool = False
+    # What the learner actually heard of the PREVIOUS reply, when they interrupted it.
+    previous_reply_heard: str | None = None
 
 
 class SpeechProvider(Protocol):

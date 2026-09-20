@@ -58,7 +58,9 @@ async def main(utterance: str) -> int:
         # user message and hangs up after 60s. The SDK sends it for you.
         await ws.send(json.dumps({
             "type": "conversation_initiation_client_data",
-            "dynamic_variables": {"learner_name": "amigo", "user_order": "nada"},
+            # Every variable a prompt mentions must be sent, or the conversation fails.
+            "dynamic_variables": {"learner_name": "amigo", "user_order": "nada",
+                                  "learner_level": "A2"},
         }))
 
         async def say_it() -> None:

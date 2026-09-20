@@ -78,9 +78,11 @@ afterwards, so a slow or absent renderer can never stall speech.
 | --- | --- | --- |
 | `serve_order` | Maria | `items` (menu ids), `to_go`, `total_mxn`, `total_words_es` |
 | `show_bill` | Maria | `total_mxn`, `total_words_es`, `items` |
-| `play_gesture` | Maria, Luis | `gesture` — one of the `gestures` from `/v1/npcs` |
+| `play_gesture` | Maria, Luis | `gesture` — one of the `gestures` from `/v1/npcs`; `source: "inferred"` |
 
-Every action also carries `action` and `npc_id`. `serve_order` declares the **whole**
+Every action also carries `action` and `npc_id`. Gestures are no longer a tool the
+character calls (that cost a second model round trip on most turns); the server picks
+at most one per reply from the character's words, never the same one twice running. `serve_order` declares the **whole**
 order and replaces any previous one, so repeating it never double-charges.
 
 ```json
@@ -124,14 +126,21 @@ Use the returned Content-Type to decode the audio. Reuse a client-generated
 saved scenario and validate the NPC. Add `response_format=json` to receive
 `audio_base64`, `media_type`, `sample_rate`, `user_transcript`, `agent_transcript`,
 `actions`, `goals_achieved` (goal ids the director had ticked *before* this turn; see
-Goal tracking), `session_id`, and `npc_id`. Transcripts may be null.
+Goal tracking), `session_id`, and `npc_id`. Transcripts may be null. Also returned, and
+safe to ignore: `visemes` (see Mouth shapes), `low_confidence_words` (words the
+recogniser was unsure of), `timings_ms` (where the time went; also sent as a
+`Server-Timing` header), `ended` (the character said goodbye and hung up; the next turn
+reopens the conversation with its memory intact) and `previous_reply_heard` (see
+Interruption).
 
-Two optional query parameters make the café scenario work properly:
+Optional query parameters that make the café scenario work properly:
 
 | Parameter | Why |
 | --- | --- |
 | `run_id` | Groups one visit. Send the **same** value to Maria and to Luis and he will know what you ordered from her. Each character has its own `session_id`, so without `run_id` nothing carries across. `[A-Za-z0-9_-]`, up to 64 characters. |
 | `learner_name` | How the characters address the player. Defaults to `amigo`. |
+| `learner_level` | `A1`, `A2`, `B1` or `B2`. Changes how simply the characters speak, never who they are. Defaults to the scenario's level (`A2`). Send it on `warm` and on every turn. |
+| `interrupted_at_ms` | Set when the learner cut the previous reply short: how many ms of it had played. See Interruption. |
 
 ```sh
 curl -X POST 'http://127.0.0.1:8765/v1/speech?session_id=<uuid>&npc_id=maria\
@@ -147,7 +156,73 @@ audio/mp4, audio/pcm. Raw PCM is signed PCM16 little-endian mono and requires th
 `sample_rate` query parameter (8000–48000). Containers are decoded/validated by
 the speech adapter. Each request/response is at most 10 MiB; scenario requests
 are at most 32 KiB. Provider calls time out after 60 seconds. These are complete
-HTTP turns, not realtime streaming or interruption support.
+HTTP turns. For a reply that starts playing before it is finished, see Streaming.
+
+### Warming a session
+
+```
+POST /v1/speech/sessions/{session_id}/warm?npc_id=maria&run_id=<visit>&learner_name=<name>&learner_level=A2
+→ 204
+```
+
+Opens the character's conversation in the background (about two seconds). Call it when
+the player walks up, at the same moment the pre-recorded greeting starts playing, and
+the learner's first sentence costs the same as every other one instead of five seconds
+or more. Safe to repeat; a warm session is left alone. Same `session_id` as the turns
+that follow. A silent or garbled clip on the first turn returns 422 and does **not**
+drop the warm session.
+
+### Streaming
+
+```
+POST /v1/speech/stream?session_id=…&npc_id=maria&run_id=…&learner_name=…&learner_level=A2
+Content-Type: audio/wav          (same body and query parameters as /v1/speech)
+→ 200 application/x-ndjson       one JSON object per line, flushed as it happens
+```
+
+```json
+{"type":"transcript","text":"Quiero un café de olla","low_confidence_words":["olla"],"stt_ms":402,"min_logprob":-1.9}
+{"type":"audio","seq":0,"sample_rate":16000,"offset_ms":0,"pcm_base64":"…","visemes":[{"t":0,"d":46,"v":"sil"},{"t":46,"d":24,"v":"PBM"}]}
+{"type":"text","text":"Claro, joven. ¿Para tomar aquí o para llevar?"}
+{"type":"action","action":{"action":"play_gesture","npc_id":"maria","gesture":"nod","source":"inferred"}}
+{"type":"audio","seq":1,"sample_rate":16000,"offset_ms":1180,"pcm_base64":"…","visemes":[…]}
+{"type":"done","timings_ms":{"stt":402,"session_open":0,"first_audio":640,"first_sound":1050,"complete":1900,"total":2300,"reply_audio":3400},"goals_achieved":["order"],"ended":false,"previous_reply_heard":null,"session_id":"…","npc_id":"maria"}
+```
+
+- `audio.pcm_base64` is PCM16 little-endian mono at `sample_rate`. **Play each frame as
+  it arrives**; frames come faster than real time, so push them into a ring buffer.
+- In Unity: `UnityWebRequest` with a `DownloadHandlerScript`; split `ReceiveData` on
+  `\n`; parse each complete line. No new package is needed.
+- `text` may arrive before or after the audio it describes; show it as the caption.
+- `action` is exactly the object you already handle from `actions`.
+- `flush` (rare): drop any audio you have buffered for this reply.
+- `error`: `{"type":"error","detail":"…"}`, then the stream ends. Anything that can be
+  rejected up front (bad audio, unknown character) is still a normal HTTP status.
+- `done.ended` is true when the character said goodbye and hung up.
+
+Measured on the live service (2026-09-20, warm session, end of upload to first audio
+frame at the client): about **1.0 s** for a plain reply, **1.25 s** for one that runs
+`serve_order` or `show_bill`, against 3 to 5 s before. The classic endpoint gets most
+of the saving too (a reply now ends when its last word has been voiced instead of on a
+1.4 s silence timer) but cannot start playing before the whole reply exists.
+`GET /v1/metrics` reports p50 and p90 per stage per character, live.
+
+### Mouth shapes
+
+Every `audio` line has `visemes`, and `POST /v1/speech?response_format=json` returns the
+whole timeline as `visemes`: `t` and `d` in milliseconds on the reply's clock (0 is the
+first sample of the first frame), `v` one of `sil A E I O U PBM FV L S TD KG R CH`. They
+come from the timing data ElevenLabs sends with the audio, so they are exact, not
+estimated from loudness. Map them to the avatar's viseme blendshapes and blend over
+about 60 ms.
+
+### Interruption
+
+If the talk key goes down while a character is speaking: stop that AudioSource, note
+how many milliseconds of the reply had played, and send it with the next turn as
+`interrupted_at_ms`. The server works out which words were actually heard, keeps only
+those in the transcript, and tells the character it was cut off, so it reacts like a
+person. `previous_reply_heard` echoes what it concluded.
 
 ### Built-in ElevenLabs integration
 
@@ -173,16 +248,20 @@ transcription request only on a misdetection, which is logged at INFO.
 
 Agent output must be PCM; its sample rate is read from session metadata. Enable
 agent_response and audio client events. The initial greeting is drained before
-submitting the user's turn. Reply completion follows the teammate's quiet-period
-approach: both text and audio must arrive, then audio must go quiet for 1.4 seconds.
-Unusually long gaps between audio chunks can still truncate a reply; a live check
-with the configured agent is required. Scene tool calls are priced and answered by the
-server, and reported to the client as `actions`; see Scene actions above.
+submitting the user's turn. A reply is complete when its text has been fully voiced,
+judged from the alignment data that arrives with each audio frame; a turn stays open
+across a tool call so speech, tool, speech is one reply. Transcription and the socket
+open run in parallel. Scene tool calls are priced and answered by the server, and
+reported to the client as `actions`; see Scene actions above. Asked in Spanish to slow
+down, a character wraps its next sentences in a slower voice (`<despacio>`, stripped
+from transcripts).
 
 Characters on the same `run_id` overhear each other: after a turn, every other open
 session on that run whose character differs gets a `contextual_update` with what the
 learner said and how the character answered, marked as not addressed to them. A session
 opened later does not get earlier turns; it starts from the run state (`{{user_order}}`).
+A conversation that is reopened (after `ended`, or after the idle close) is given the
+visit so far, so the character carries on rather than greeting again.
 
 ### Scene notes
 
@@ -305,7 +384,20 @@ ticked stays ticked; the grader below decides how well it was done. Goal ids are
 client's quest ids. Pass `scenario_id` to track a generated scenario's goals instead of
 the pack's. State is one small JSON file per run under `runs/transcripts/goals/`
 (`GOAL_DIR`). 503 when no director is configured (`OPENAI_API_KEY` plus
-`DIRECTOR_MODEL`, falling back to `TUTOR_MODEL`; `director_ready` on `/health`).
+`DIRECTOR_MODEL`, falling back to `TUTOR_MODEL`; `director_ready` on `/health`). The
+director sends `reasoning: {effort: none}`, so the model must be one that accepts a
+reasoning parameter (a gpt-5.x model); a gpt-4.x model fails every review silently.
+
+The response also carries what the director noticed but never acts on: `learner_state`
+(`fine`, `hesitant`, `stuck`, `distressed`), `mistake_count`, `last_note` and
+`counters`. Useful as a debug overlay. Nothing is delivered to the character and the
+learner is never shown a correction mid-run.
+
+A quote must be a substring of something the learner actually said, checked in code,
+not trusted from the model. `eval/director_cases.jsonl` holds 40 hand-labelled
+transcripts, 22 of them adversarial (the order said in English, a bare "sí", Maria
+giving the price unprompted, the character saying the phrase instead of the learner);
+`uv run python eval/run_eval.py` fails on a single false award. See `eval/README.md`.
 
 ### Grading a finished run
 

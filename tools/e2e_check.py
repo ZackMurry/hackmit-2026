@@ -6,15 +6,22 @@ paths a game client can trigger by accident.
 
     uv run python -m orchestrator &        # server must already be running
     uv run python tools/e2e_check.py
+    uv run python tools/e2e_check.py --base http://127.0.0.1:8799   # another server
 
 Learner speech is synthesised offline with the macOS `say` command, so the only
-paid calls are the agent turns themselves (roughly four).
+paid calls are the agent turns themselves (roughly five).
+
+A check that cannot run because another lane has not wired its part yet is printed as
+SKIP and does not count for or against the total; it is never reported as a pass.
 """
 
 from __future__ import annotations
 
+import argparse
+import base64
 import io
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -27,13 +34,39 @@ from pathlib import Path
 BASE = "http://127.0.0.1:8765"
 ROOT = Path(__file__).resolve().parent.parent
 PASS, FAIL = "  \033[32mPASS\033[0m", "  \033[31mFAIL\033[0m"
+SKIP, INFO = "  \033[33mSKIP\033[0m", "  \033[36mINFO\033[0m"
 results: list[tuple[bool, str]] = []
+skipped: list[str] = []
 
 
 def check(ok: bool, label: str, detail: str = "") -> bool:
     results.append((ok, label))
     print(f"{PASS if ok else FAIL}  {label}" + (f"\n        {detail}" if detail else ""))
     return ok
+
+
+def skip(label: str, why: str) -> None:
+    skipped.append(label)
+    print(f"{SKIP}  {label}\n        {why}")
+
+
+def pace(reply: dict) -> float | None:
+    """Seconds of reply audio per spoken letter, or None if it cannot be measured.
+
+    Letters rather than characters so that markup such as <despacio> and punctuation
+    do not flatter the number.
+    """
+    raw = base64.b64decode(reply.get("audio_base64") or "")
+    text = re.sub(r"</?\w+>|\[[a-z ]+\]", "", reply.get("agent_transcript") or "")
+    letters = sum(ch.isalnum() for ch in text)
+    if not raw or letters < 8:
+        return None
+    if raw[:4] == b"RIFF":
+        with wave.open(io.BytesIO(raw)) as clip:
+            seconds = clip.getnframes() / clip.getframerate()
+    else:
+        seconds = len(raw) / 2 / (reply.get("sample_rate") or 16000)
+    return seconds / letters
 
 
 def spanish_voice() -> str:
@@ -92,6 +125,10 @@ def describe(reply: dict) -> str:
 
 
 def main() -> int:
+    global BASE
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--base", default=BASE, help="orchestrator URL")
+    BASE = parser.parse_args().base.rstrip("/")
     voice = spanish_voice()
     run = uuid.uuid4().hex[:16]
     maria_session, luis_session = str(uuid.uuid4()), str(uuid.uuid4())
@@ -124,6 +161,7 @@ def main() -> int:
     # second turn, not the first. Actions are collected across both.
     print("\n  — Maria, the waitress —")
     served: list[dict] = []
+    normal_paces: list[float] = []
     for utterance in ("Buenas tardes. Quiero un café de olla y una concha, por favor.",
                       "Para tomar aquí, por favor."):
         reply = speak(utterance, "maria", run, voice, maria_session)
@@ -132,6 +170,7 @@ def main() -> int:
             check(False, "maria: turn completed", reply["_body"])
             break
         served += [a for a in reply.get("actions", []) if a.get("action") == "serve_order"]
+        normal_paces += [p for p in [pace(reply)] if p]
     else:
         check(True, "maria: both turns completed")
         check(bool(reply.get("audio_base64")), "maria: replied with audio")
@@ -143,6 +182,20 @@ def main() -> int:
               f"got {served[-1].get('total_mxn')} MXN, expected 80 (50 + 30)")
         check(served[-1].get("total_words_es") == "ochenta",
               "maria: total supplied in Spanish words")
+
+    # Asking her to slow down must never break the turn. Whether the audio really is
+    # slower is reported, not asserted: it depends on how much she chooses to repeat.
+    reply = speak("¿Puedes repetir más despacio, por favor?", "maria", run, voice,
+                  maria_session)
+    print(f"        {describe(reply)}")
+    check("_status" not in reply and bool(reply.get("agent_transcript")),
+          "maria: a request to slow down gets a reply")
+    slow = pace(reply) if "_status" not in reply else None
+    if slow and normal_paces:
+        usual = sum(normal_paces) / len(normal_paces)
+        print(f"{INFO}  slow reply {slow * 1000:.0f} ms/letter vs {usual * 1000:.0f} usual "
+              f"({(slow / usual - 1) * 100:+.0f}%)"
+              f"{'' if slow > usual * 1.08 else ' — NOT measurably slower'}")
 
     reply = speak("¿Cuánto es todo?", "maria", run, voice, maria_session)
     print(f"        {describe(reply)}")
@@ -189,7 +242,8 @@ def main() -> int:
 
     # ---------------------------------------------------------------- summary
     passed = sum(1 for ok, _ in results if ok)
-    print(f"\n  {passed}/{len(results)} checks passed\n")
+    print(f"\n  {passed}/{len(results)} checks passed"
+          + (f", {len(skipped)} skipped (not wired yet)" if skipped else "") + "\n")
     for ok, label in results:
         if not ok:
             print(f"    failed: {label}")

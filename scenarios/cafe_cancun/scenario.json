@@ -16,11 +16,17 @@
       "gender": "female",
       "voice_id": "qGUobVOQFekqmtk6YZdK",
       "voice_name": "Maria (MX female)",
+      "voice_library_owner_id": "7398804d9eaf2f463899a907587c33a390591775784f87857b6d0e1e4e3e66f6",
       "prompt_file": "prompts/maria.md",
       "first_message": "¡Buenas tardes! Pásale, joven. Tu amigo ya está en la mesa. Ven conmigo, te llevo.",
-      "tools": ["serve_order", "show_bill", "play_gesture"],
+      "tools": ["serve_order", "show_bill"],
       "max_duration_seconds": 180,
-      "tts": { "speed": 1.0, "stability": 0.45, "similarity_boost": 0.8 },
+      "tts": { "speed": 1.0, "stability": 0.40, "similarity_boost": 0.8 },
+      "tts_model": "flash",
+      "supported_voices": [
+        { "label": "despacio", "language": "es", "speed": 0.78,
+          "description": "Repeat slowly and clearly when the learner asks you to slow down or repeat" }
+      ],
       "turn": { "eagerness": "patient", "timeout": 8 }
     },
     {
@@ -30,14 +36,22 @@
       "gender": "male",
       "voice_id": "LZ0fpGC6iVFQ3i0EHB7h",
       "voice_name": "Luis (MX male)",
+      "voice_library_owner_id": "02475b5ae957cc81d5748108d2aa08ab67630dd0728860267b23f63061c9be8d",
       "prompt_file": "prompts/luis.md",
       "first_message": "¡Hola! ¿Qué tal? Siéntate, siéntate. Qué bueno que llegaste.",
-      "tools": ["play_gesture"],
+      "tools": [],
       "max_duration_seconds": 300,
-      "tts": { "speed": 1.0, "stability": 0.45, "similarity_boost": 0.8 },
+      "tts": { "speed": 1.0, "stability": 0.35, "similarity_boost": 0.8 },
+      "tts_model": "flash",
+      "supported_voices": [
+        { "label": "despacio", "language": "es", "speed": 0.78,
+          "description": "Repeat slowly and clearly when the learner asks you to slow down or repeat" }
+      ],
       "turn": { "eagerness": "patient", "timeout": 8 }
     }
   ],
+
+  "soft_timeout": { "timeout_seconds": 2.2, "message": "Mmm, a ver...", "use_llm_generated_message": false },
 
   "asr_keywords": [
     "café de olla", "horchata", "jamaica", "concha", "chilaquiles",
@@ -61,6 +75,7 @@
       "description": "Place the customer's complete order on the table. Call once, when the order is final. Always pass the FULL order, not just newly added items \u2014 this call replaces any previous one. Returns the total price in pesos.",
       "expects_response": true,
       "response_timeout_secs": 3,
+      "pre_tool_speech": "force",
       "parameters": {
         "type": "object",
         "required": ["items"],
@@ -79,6 +94,7 @@
       "description": "Show the customer the bill for what they have ordered. Call when they ask what they owe, or try to leave without asking. Returns the total in pesos.",
       "expects_response": true,
       "response_timeout_secs": 3,
+      "pre_tool_speech": "force",
       "parameters": { "type": "object", "properties": {} }
     },
     "play_gesture": {
