@@ -144,7 +144,9 @@ class GraderProvider(Protocol):
 
 class OpenAIGrader:
     def __init__(self, key: str, model: str):
-        self.client = AsyncOpenAI(api_key=key, max_retries=0)
+        # One call at the end of the visit, so unlike the live turns it can afford to
+        # retry a dropped connection rather than hand the learner an empty receipt.
+        self.client = AsyncOpenAI(api_key=key, max_retries=2, timeout=20.0)
         self.model = model
 
     async def grade(self, rubric: list[RubricGoal],

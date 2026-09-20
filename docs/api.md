@@ -239,11 +239,12 @@ The built-in adapter returns PCM wrapped in WAV (`audio/wav`), so save it as
 microphone streaming. See the official [transcription API](https://elevenlabs.io/docs/api-reference/speech-to-text/convert)
 and [agent WebSocket protocol](https://elevenlabs.io/docs/eleven-agents/libraries/web-sockets).
 
-Scribe picks the language itself, and a learner's accented Spanish is close enough to
-Italian or Portuguese to be heard as either. The adapter only accepts the scenario's
-language (`language` in `scenario.json`) or English; any other guess is discarded and
-the clip is transcribed once more pinned to the target language. That costs a second
-transcription request only on a misdetection, which is logged at INFO.
+Left to pick the language itself, Scribe hears a learner's accented Spanish as
+Italian, Portuguese or English and the character answers the wrong sentence. Every
+clip is therefore transcribed pinned to the scenario's language (`language` in
+`scenario.json`). Constructing `ElevenLabsSpeech` with several `languages` restores
+detection among them, with one extra transcription (logged at INFO) when the guess
+falls outside.
 
 Agent output must be PCM; its sample rate is read from session metadata. Enable
 agent_response and audio client events. The initial greeting is captured for `warm`

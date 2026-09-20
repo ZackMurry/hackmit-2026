@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from orchestrator.app import create_app
 from orchestrator.elevenlabs_adapter import ElevenLabsSpeech, spoken_text
 from orchestrator.metrics import Metrics
+from orchestrator.speech import SpeechUnavailable
 from orchestrator.speech import SpeechInput, SpeechInputError
 from orchestrator.visemes import heard_prefix, timeline
 
@@ -566,3 +567,28 @@ def test_speaking_then_calling_a_tool_then_speaking_again_is_one_reply():
     out = run(go())
     assert out.agent_transcript == "Claro, un café de olla. Ahorita te lo traigo."
     assert [a["action"] for a in out.actions if a["action"] != "play_gesture"] == ["serve_order"]
+
+
+# ------------------------------------------------------------------ quota
+
+def test_a_socket_closed_for_quota_is_reported_as_unavailable_not_a_bare_failure():
+    """ElevenLabs hangs up with close code 3000 `quota_exceeded` when the account is
+    out of characters. The first send then fails; the learner should be told why."""
+    class OutOfCredits(Agent):
+        close_code, close_reason = 3000, "quota_exceeded"
+
+        async def send(self, raw):
+            raise ConnectionError("sent 3000 (registered) quota_exceeded")
+
+    async def go():
+        speech, _ = provider()
+
+        async def connect(url, **_):
+            return OutOfCredits([])
+        speech.connect = connect
+        try:
+            with pytest.raises(SpeechUnavailable, match="out of credits"):
+                await speech.warm(turn())
+        finally:
+            await speech.aclose()
+    run(go())

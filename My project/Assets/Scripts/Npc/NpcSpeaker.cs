@@ -28,8 +28,10 @@ public class NpcSpeaker : MonoBehaviour
     [Header("Placeholder voice")]
     [Tooltip("Played for lines that have no server audio. Empty = load placeholderResource.")]
     public AudioClip placeholderClip;
-    [Tooltip("Resources path of the prerecorded sample (tools/sample_es.mp3).")]
-    public string placeholderResource = "Audio/sample_es";
+    [Tooltip("Resources path of a prerecorded sample, e.g. Audio/sample_es. Empty (the default) = a " +
+             "synthetic murmur, because that sample is a man's voice and it came out of Maria's mouth " +
+             "whenever the speech provider was down.")]
+    public string placeholderResource = "";
 
     public bool IsSpeaking => source != null && source.isPlaying;
 

@@ -586,7 +586,9 @@ public class Wish : MonoBehaviour
         foreach (var state in new[] { blank.normal, blank.hover, blank.active, blank.focused, blank.onNormal, blank.onHover, blank.onActive, blank.onFocused })
         {
             state.background = null;
-            state.scaledBackgrounds = Array.Empty<Texture2D>();
+#if UNITY_EDITOR
+            state.scaledBackgrounds = Array.Empty<Texture2D>(); // editor-only API; the player strips it
+#endif
         }
         GUI.skin.settings.cursorColor = ink;
         GUI.skin.settings.cursorFlashSpeed = 1.1f;

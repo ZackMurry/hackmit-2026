@@ -74,7 +74,24 @@ def make_provider(hears=None, **kwargs):
     return provider, sockets, requests
 
 
-def test_a_guess_outside_spanish_or_english_is_heard_again_as_spanish():
+def test_by_default_every_clip_is_transcribed_pinned_to_the_scenario_language():
+    """Scribe hears accented Spanish as English often enough that guessing is off:
+    one request, language_code set, whatever it would have detected."""
+    async def run():
+        provider, _, requests = make_provider(hears=[
+            {"text": "Quiero un café", "language_code": "spa"}], languages=("es",))
+        try:
+            result = await provider.respond(turn())
+            assert result.user_transcript == "Quiero un café"
+            uploads = [r for r in requests if r.url.path.endswith("speech-to-text")]
+            assert len(uploads) == 1
+            assert b'name="language_code"\r\n\r\nes' in uploads[0].content
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_with_several_languages_a_guess_outside_them_is_heard_again_as_the_first():
     async def run():
         provider, _, requests = make_provider(hears=[
             {"text": "Uhm, qual è questa un burrito?", "language_code": "ita"},

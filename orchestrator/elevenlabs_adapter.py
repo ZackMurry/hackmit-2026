@@ -7,10 +7,12 @@ clients that have not switched to streaming.
 
 
 Uploads are transcribed with ElevenLabs Scribe, then sent as user_message to the
-existing voice agent. Scribe guesses the language itself and a learner's accented
-Spanish is close enough to Italian or Portuguese to be heard as either, so a guess
-outside the scenario's language and English is thrown away and the clip transcribed
-again pinned to the target language. The scripts remain standalone; importing them would load
+existing voice agent. Left to guess, Scribe hears a learner's accented Spanish as
+Italian, Portuguese or English, so every clip is transcribed pinned to the scenario's
+language: the learner is here to speak it, and a Spanish transcript of an English
+sentence is a better prompt for the character than a confident English one. Pass
+several `languages` to fall back to detection (with a re-transcription when the guess
+is outside them). The scripts remain standalone; importing them would load
 credentials and (for the beginner demo) mutate shared agent configuration.
 """
 from __future__ import annotations
@@ -119,10 +121,11 @@ class ElevenLabsSpeech:
                  languages: tuple[str, ...] | None = None, grace=0.35):
         self.agents = agents
         self.stt_model = stt_model
-        # What the learner may be heard speaking: the target language first, then
-        # English, since a learner falls back to it. None means take Scribe's word.
+        # What the learner may be heard speaking, target language first. One language
+        # (the default) pins every transcription to it; more than one lets Scribe pick
+        # among them; None means take Scribe's word.
         if languages is None and pack is not None:
-            languages = (pack.scenario.language, "en")
+            languages = (pack.scenario.language,)
         self.languages = tuple(dict.fromkeys(languages)) if languages else None
         self.http = client or httpx.AsyncClient(
             base_url="https://api.elevenlabs.io", headers={"xi-api-key": key}, timeout=30)
@@ -180,7 +183,10 @@ class ElevenLabsSpeech:
         return ("input." + extensions[media], data, media)
 
     async def _recognise(self, upload: tuple) -> Heard:
-        body = await self._scribe(upload)
+        if self.languages and len(self.languages) == 1:
+            body = await self._scribe(upload, language=self.languages[0])
+        else:
+            body = await self._scribe(upload)
         heard = ISO_639.get(body.get("language_code") or "", body.get("language_code"))
         if self.languages and heard and heard not in self.languages:
             # Scribe drifts to a sibling language on accented speech: hear it again
@@ -260,6 +266,20 @@ class ElevenLabsSpeech:
                 session.queue.get_nowait()
             session.queue.put_nowait(None)
 
+    @staticmethod
+    def _closed_for_quota(ws) -> bool:
+        """ElevenLabs hangs up with close code 3000 and a `quota_exceeded` reason the
+        moment the account's characters run out. Every other close is a plain outage."""
+        code = getattr(ws, "close_code", None)
+        reason = str(getattr(ws, "close_reason", "") or "").lower()
+        return code == 3000 or "quota" in reason
+
+    def _raise_closed(self, session: Session, what: str):
+        if self._closed_for_quota(session.ws):
+            raise SpeechUnavailable("The ElevenLabs account is out of credits; switch ELEVENLABS_API_KEY "
+                                    "to another account (tools/switch_account.py)")
+        raise RuntimeError(what)
+
     async def _turn(self, session: Session, *, greeting=False):
         audio, text, final, voiced = bytearray(), "", False, ""
         deadline = time.monotonic() + (10 if greeting else 40)
@@ -284,7 +304,7 @@ class ElevenLabsSpeech:
             if message is None:
                 if audio and text:
                     break
-                raise RuntimeError("Agent connection closed before reply")
+                self._raise_closed(session, "Agent connection closed before reply")
             kind = message.get("type")
             if kind == "conversation_initiation_metadata":
                 fmt = message["conversation_initiation_metadata_event"]["agent_output_audio_format"]
@@ -397,7 +417,14 @@ class ElevenLabsSpeech:
             return 0
         began = time.monotonic()
         await self._close(session)
-        await self._open(session, agent, request)
+        try:
+            await self._open(session, agent, request)
+        except Exception:
+            # A socket ElevenLabs shut for lack of credits fails on the first send, as a
+            # websockets ConnectionClosedError. Name the cause rather than a bare 502.
+            if self._closed_for_quota(session.ws):
+                self._raise_closed(session, "")
+            raise
         session.context = context
         return int((time.monotonic() - began) * 1000)
 
