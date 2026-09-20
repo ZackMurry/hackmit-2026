@@ -7,6 +7,8 @@ Generated world models + immersive language learning
 - `My project/` — Unity 6 project. Scenes: `Assets/Scenes/SampleScene.unity` (ModernHouse) and
   `Assets/Scenes/CancunCafe.unity` (Café Nader; NPCs from `npcs_cancun.json`).
 - `Assets/Worlds/` — WorldLabs Gaussian-splat worlds (`.spz`) and their collider meshes.
+- `orchestrator/` — the Python API: scenario generation, speech turns, run recording and grading.
+- `scenarios/cafe_cancun/` — the authored café: cast, prompts, menu, goals and greeting audio.
 - `tools/spz_to_collider.py` — builds a walkable collider `.glb` from a `.spz` when WorldLabs didn't ship one.
 
 ## Talking to NPCs
@@ -43,8 +45,40 @@ what comes back — speech recognition, the character and the voice are the serv
 Lines without server audio — greetings when the server is down, and every reply when `serverUrl`
 is empty — are voiced with the prerecorded `tools/sample_es.mp3` (copied to
 `Assets/Resources/Audio/`), so the interaction, audio positioning and lip-sync can be tested
-offline. Goal *scoring* isn't reported by the API yet; quests tick via scene actions
-(`"action"` in `quests.json`), `quests.json` edits or `QuestManager.Complete`.
+offline.
+
+## Goals and grading
+
+A scenario carries goals — "order something in Spanish", "ask a follow-up about something Luis
+said". Two separate things happen with them, and the characters know about neither: an actor who
+is also grading you talks like an examiner, so Maria and Luis are never told.
+
+**During the run** the HUD quest list ticks off scene actions, and that is the client's own
+bookkeeping: a quest whose `action` matches what the server reported completes (`serve_order` →
+the `order` quest), as do `quests.json` edits and `QuestManager.Complete`. The server does not
+judge goals mid-conversation.
+
+**After the run** the server grades what was actually said. Every `/v1/speech` turn is appended
+to the run it belongs to — the learner's transcript, the character's reply, and one line per
+scene action the character triggered — so tracking needs nothing new from the client beyond the
+`run_id` `ConversationClient` already sends once per Play session:
+
+```sh
+curl http://127.0.0.1:8765/v1/runs/<run_id>          # what was said, and what was done
+curl http://127.0.0.1:8765/v1/grade \
+  -H 'Content-Type: application/json' -d '{"run_id":"<run_id>"}'
+```
+
+`POST /v1/grade` returns `overall` — **1–10 for how completely the whole goal set was hit**,
+weighting the goals marked `core` above the rest — plus a per-goal verdict quoting the learner's
+own words as evidence, and a short summary addressed to them. A goal is never awarded without a
+quote. Add `scenario_id` to grade against a generated scenario's goals instead of the café's, or
+post `goals` and `transcript` inline to grade a conversation the server never saw. Recordings are
+JSON Lines under `runs/transcripts/`. Details in `docs/api.md`.
+
+Unity does not call `/v1/grade` yet — there is no end card, so a finished run is graded with
+curl. The build doc's live director, which would tick goals from speech during the run rather
+than from scene actions, is also not built.
 
 ## Content is JSON
 
@@ -179,6 +213,9 @@ uv run tools/spz_to_collider.py Assets/Worlds/CancunCafe/cancun_cafe_model.spz \
 See [API setup and endpoint contracts](docs/api.md). `uv sync`, put `ELEVENLABS_API_KEY`,
 `AGENT_ID_MARIA` and `AGENT_ID_LUIS` in `orchestrator/.env` or the repo-root `.env` (both are
 git-ignored; `tools/provision_agents.py --apply` creates the agents and prints the ids), then
-`uv run python -m orchestrator`.
+`uv run python -m orchestrator`. It serves the cast (`/v1/npcs`), scenario generation
+(`/v1/scenarios`), speech turns (`/v1/speech`), the recorded run (`/v1/runs/{run_id}`) and
+grading (`/v1/grade`); `/health` reports which of those are configured, and `/docs` is browsable.
+Grading additionally needs `OPENAI_API_KEY` and `TUTOR_MODEL`.
 Unity remains separately owned. The API includes an ElevenLabs adapter based on
 the teammate's voice demo scripts; see the API docs for keys and agent IDs.

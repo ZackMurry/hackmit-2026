@@ -219,20 +219,100 @@ custom adapter, speech returns 503. Unknown/unconfigured NPC agents also return
 503. `SPEECH_ADAPTER` overrides the built-in implementation when set. Tests mock
 provider HTTP/WebSocket responses; they do not represent live voice validation.
 
+## Goal tracking and grading
+
+The characters never know they are being graded. The server records what was said,
+and a separate pass judges it afterwards against the scenario's goals.
+
+### What the server records
+
+Every `/v1/speech` turn appends to the run it belongs to: the learner's transcript,
+the character's reply, and one line per scene action the character triggered. Nothing
+extra is needed from the client — send `run_id` (the same value you already send so
+Luis knows what you ordered) and tracking happens on its own. Without a `run_id` the
+`session_id` is used instead, which records each character separately.
+
+```sh
+curl http://127.0.0.1:8765/v1/runs/visit-1
+```
+
+```json
+{"run_id": "visit-1", "turn_count": 3, "transcript": [
+  {"role": "learner", "npc_id": "maria", "text": "Quisiera un café de olla, por favor."},
+  {"role": "npc", "npc_id": "maria", "text": "Claro que sí, ¿algo más?"},
+  {"role": "event", "npc_id": "maria", "text": "serve_order items=cafe_olla total_mxn=45"}]}
+```
+
+`event` lines are not speech: they are things that actually happened in the game, so a
+goal can be checked against `serve_order` having fired rather than inferred from
+wording alone. Recording is best effort and never fails a speech turn. Files are JSON
+Lines under `runs/transcripts` (`RUN_DIR`), capped at 1 MiB and 400 turns read back.
+404 for an unrecorded run, 422 for a `run_id` outside `[A-Za-z0-9_-]{1,64}`.
+
+### Grading a finished run
+
+```sh
+curl http://127.0.0.1:8765/v1/grade \
+  -H 'Content-Type: application/json' \
+  -d '{"scenario_id":"<uuid>","run_id":"visit-1"}'
+```
+
+`overall` is **1–10 for how completely the whole goal set was hit**, weighting `core`
+goals above the rest: 10 is every goal achieved and done well, 7 is every core goal,
+5 is about half, 1 is none. `goals_achieved` / `goals_total` are the raw count behind
+it, and `summary` is two or three sentences addressed to the learner, in English.
+
+```json
+{"overall": 7, "goals_achieved": 4, "goals_total": 6,
+ "scenario_id": null, "run_id": "visit-1",
+ "goals": [
+   {"goal_id": "G1", "achieved": true,
+    "evidence_quote": "Quisiera un café de olla, por favor.",
+    "note": "A full request form with a menu item, and serve_order followed."},
+   {"goal_id": "G2", "achieved": false, "evidence_quote": null,
+    "note": "Maria volunteered the total before it was asked for."}],
+ "summary": "You ordered clearly and handled the milk question. Next time ask what something costs before you are told."}
+```
+
+Both inputs have three sources, checked in order:
+
+| Input | Order |
+| --- | --- |
+| The rubric | inline `goals` → the goals of a saved `scenario_id` → the loaded scenario pack |
+| The conversation | inline `transcript` → whatever the server recorded for `run_id` |
+
+So a client that already sends `run_id` needs only `{"run_id": "..."}`, one that
+generated a scenario adds `scenario_id`, and one that keeps its own transcript can
+post `goals` and `transcript` and let the server store nothing. Generated goals
+(`description`) and authored pack goals (`label`) are normalised to one rubric shape,
+so either source grades the same way.
+
+**A goal is only awarded with the learner's own words quoted as evidence.** A grade
+that awards a goal without a quote, or that judges a different goal set than it was
+given, is rejected as provider failure rather than returned. Bodies are capped at
+256 KiB; the transcript at 400 turns and the rubric at 12 goals.
+
+Grading uses the OpenAI Responses API with Pydantic structured output, configured by
+`OPENAI_API_KEY` and `TUTOR_MODEL` (falling back to `SCENARIO_MODEL`); 503 when
+neither is set, and `grader_ready` on `/health` says which. It is the build doc's
+end-of-run tutor. The per-turn director that ticks goals live during a run is still
+not implemented.
+
 ## Errors and checks
 
-Errors use `{"detail": ...}`. Statuses: 404 unknown scenario; 413 oversized body;
+Errors use `{"detail": ...}`. Statuses: 404 unknown scenario or unrecorded run; 413 oversized body;
 415 unsupported content type; 422 invalid inputs; 503 missing provider configuration;
 502 provider failure/refusal/invalid output; 504 provider deadline exceeded.
 Provider exception details are not returned to clients.
 
 ```sh
-uv run pytest                        # 63 tests, no credentials needed
+uv run pytest                        # 83 tests, no credentials needed
 uv run python tools/e2e_check.py     # live end-to-end, needs a running server
 ```
 
 Tests require no credentials and cover persistence, scenario-to-speech handoff,
-validation, missing configuration, audio responses, timeouts, and provider errors.
-Live provider checks require an ElevenLabs key and configured agent IDs.
-The director/tutor scoring from the build doc, the Unity WebSocket bridge and
-realtime streaming voice are not implemented; this is a complete-turn HTTP API.
+validation, missing configuration, audio responses, timeouts, provider errors,
+run recording, and grade rejection. Live provider checks require an ElevenLabs key
+and configured agent IDs. The build doc's per-turn director, its live goal ticks and
+actor steering, the Unity WebSocket bridge and realtime streaming voice are not
+implemented; this is a complete-turn HTTP API.

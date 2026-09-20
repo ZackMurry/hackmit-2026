@@ -104,7 +104,7 @@ def test_speech_reuses_session_excludes_greeting_and_switches_npc():
 
 def test_http_real_adapter_contract(tmp_path):
     provider, sockets, _ = make_provider()
-    with TestClient(create_app(speech=provider, data_dir=tmp_path)) as client:
+    with TestClient(create_app(speech=provider, data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
         sid = str(uuid4())
         result = client.post("/v1/speech", params={"session_id": sid, "npc_id": "luis",
             "sample_rate": 16000, "response_format": "json"}, content=b"\0\0" * 1600,

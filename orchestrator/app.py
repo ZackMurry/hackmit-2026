@@ -10,13 +10,18 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .models import GeneratedScenario, ScenarioRequest, ScenarioResponse
+from .grading import (GraderProvider, OpenAIGrader, TranscriptStore, create_grader,
+                      event_text, rubric_goals)
+from .models import (GeneratedScenario, Grade, GradeRequest, GradeResponse,
+                     ScenarioRequest, ScenarioResponse, TranscriptTurn)
 from .scene import ScenePack, default_pack_dir
 from .scenarios import OpenAIScenarios, ScenarioProvider, ScenarioStore
 from .speech import SpeechInputError, SpeechUnavailable, SUPPORTED_AUDIO_TYPES, SpeechInput, SpeechOutput, SpeechProvider, load_speech_provider
 
 MAX_AUDIO_BYTES = 10 * 1024 * 1024
 MAX_JSON_BYTES = 32 * 1024
+# A whole conversation, not a single prompt.
+MAX_TRANSCRIPT_BYTES = 256 * 1024
 
 
 async def read_limited(request: Request, limit: int) -> bytes:
@@ -45,9 +50,12 @@ async def provider_call(awaitable, timeout: float):
 
 def create_app(*, speech: SpeechProvider | None = None,
                scenarios: ScenarioProvider | None = None,
-               data_dir: Path | None = None, timeout: float = 60,
+               grader: GraderProvider | None = None,
+               data_dir: Path | None = None, runs_dir: Path | None = None,
+               timeout: float = 60,
                pack: "ScenePack | None" = None) -> FastAPI:
     store = ScenarioStore(data_dir or Path(os.getenv("SCENARIO_DIR", "runs/scenarios")))
+    transcripts = TranscriptStore(runs_dir or Path(os.getenv("RUN_DIR", "runs/transcripts")))
     if pack is None:
         # An authored scenario is optional: without one the API still relays speech,
         # it just cannot price an order or describe its cast.
@@ -60,6 +68,7 @@ def create_app(*, speech: SpeechProvider | None = None,
         if configured is None and os.getenv("OPENAI_API_KEY") and os.getenv("SCENARIO_MODEL"):
             configured = OpenAIScenarios(os.environ["OPENAI_API_KEY"], os.environ["SCENARIO_MODEL"])
         app.state.scenarios = configured
+        app.state.grader = grader if grader is not None else create_grader()
         app.state.speech = speech
         if speech is None and os.getenv("SPEECH_ADAPTER"):
             app.state.speech = load_speech_provider(os.environ["SPEECH_ADAPTER"])
@@ -73,6 +82,8 @@ def create_app(*, speech: SpeechProvider | None = None,
         finally:
             if isinstance(configured, OpenAIScenarios):
                 await configured.aclose()
+            if isinstance(app.state.grader, OpenAIGrader):
+                await app.state.grader.aclose()
             if app.state.speech is not None and hasattr(app.state.speech, "aclose"):
                 await app.state.speech.aclose()
 
@@ -82,6 +93,7 @@ def create_app(*, speech: SpeechProvider | None = None,
     async def health():
         return {"status": "ok", "scenarios_ready": app.state.scenarios is not None,
                 "speech_ready": app.state.speech is not None,
+                "grader_ready": app.state.grader is not None,
                 "scenario_pack": pack.scenario.scenario_id if pack else None}
 
     @app.get("/v1/npcs")
@@ -176,6 +188,82 @@ def create_app(*, speech: SpeechProvider | None = None,
         except FileNotFoundError:
             raise HTTPException(404, "Scenario not found") from None
 
+    @app.get("/v1/runs/{run_id}")
+    async def get_run(run_id: str):
+        """What the server recorded for one visit: the evidence /v1/grade reads.
+
+        Every speech turn appends to it automatically, so a client that already sends
+        `run_id` gets goal tracking without doing anything else.
+        """
+        try:
+            turns = await asyncio.to_thread(transcripts.get, run_id)
+        except ValueError:
+            raise HTTPException(422, "Invalid run_id") from None
+        except FileNotFoundError:
+            raise HTTPException(404, "No recorded transcript for this run") from None
+        return {"run_id": run_id, "turn_count": len(turns),
+                "transcript": [turn.model_dump() for turn in turns]}
+
+    @app.post("/v1/grade", response_model=GradeResponse, openapi_extra={
+        "requestBody": {"required": True, "content": {"application/json": {
+            "schema": GradeRequest.model_json_schema()}}}})
+    async def grade(request: Request):
+        """Score a finished run out of 10 against its goals.
+
+        The rubric comes from inline `goals`, else a saved `scenario_id`, else the
+        loaded scenario pack. The conversation comes from an inline `transcript`,
+        else whatever the server recorded for `run_id`.
+        """
+        if request.headers.get("content-type", "").split(";")[0].strip() != "application/json":
+            raise HTTPException(415, "Expected application/json")
+        from pydantic import ValidationError
+        try:
+            payload = GradeRequest.model_validate_json(
+                await read_limited(request, MAX_TRANSCRIPT_BYTES))
+        except ValidationError:
+            raise HTTPException(422, "Expected goals or a scenario_id, and a "
+                                     "transcript or a run_id") from None
+        if app.state.grader is None:
+            raise HTTPException(503, "Configure OPENAI_API_KEY and TUTOR_MODEL")
+
+        rubric = payload.goals
+        if rubric is None and payload.scenario_id is not None:
+            saved = await get_scenario(payload.scenario_id)
+            rubric = rubric_goals(saved.scenario.goals)
+        if rubric is None and pack is not None:
+            rubric = rubric_goals(pack.scenario.goals)
+        if not rubric:
+            raise HTTPException(422, "No goals to grade: send goals, a scenario_id, "
+                                     "or load a scenario pack")
+
+        transcript = payload.transcript
+        if transcript is None and payload.run_id is not None:
+            try:
+                transcript = await asyncio.to_thread(transcripts.get, payload.run_id)
+            except (FileNotFoundError, ValueError):
+                raise HTTPException(404, "No recorded transcript for this run") from None
+        if not transcript:
+            raise HTTPException(422, "No conversation to grade: send a transcript, "
+                                     "or a run_id the server recorded")
+
+        async def validated():
+            result = await app.state.grader.grade(rubric, transcript)
+            if not isinstance(result, Grade):
+                raise ValueError("Grader returned an unexpected type")
+            judged = [goal.goal_id for goal in result.goals]
+            if sorted(judged) != sorted(goal.id for goal in rubric):
+                raise ValueError("Grader did not judge exactly the requested goals")
+            # No quote, no goal: an award we cannot show the learner is not an award.
+            if any(g.achieved and not (g.evidence_quote or "").strip() for g in result.goals):
+                raise ValueError("Grader awarded a goal without evidence")
+            return result
+
+        result = await provider_call(validated(), timeout)
+        return GradeResponse(**result.model_dump(), scenario_id=payload.scenario_id,
+                             run_id=payload.run_id,
+                             goals_achieved=sum(g.achieved for g in result.goals),
+                             goals_total=len(result.goals))
+
     @app.delete("/v1/speech/sessions/{session_id}", status_code=204)
     async def end_speech_session(session_id: UUID):
         provider = app.state.speech
@@ -232,6 +320,18 @@ def create_app(*, speech: SpeechProvider | None = None,
 
         output = await provider_call(validated(), timeout)
         actions = [a for a in output.actions if isinstance(a, dict)]
+        # Grading evidence, kept off to the side: what each side said, and what the
+        # character actually did. Best effort — a failed write must never cost the
+        # learner the turn they just paid for.
+        record = [TranscriptTurn(role=role, npc_id=npc_id, text=text.strip()[:4000])
+                  for role, text in (("learner", output.user_transcript),
+                                     ("npc", output.agent_transcript))
+                  if text and text.strip()]
+        record += [TranscriptTurn(role="event", npc_id=npc_id, text=event_text(action))
+                   for action in actions]
+        with suppress(Exception):
+            await asyncio.to_thread(transcripts.append,
+                                    run_id or str(session_id), record)
         headers = {"X-Session-ID": str(session_id), "Cache-Control": "no-store"}
         if output.sample_rate is not None:
             headers["X-Audio-Sample-Rate"] = str(output.sample_rate)

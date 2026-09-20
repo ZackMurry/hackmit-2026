@@ -35,7 +35,7 @@ class Speech:
 
 def test_scenario_persistence_and_speech_context(tmp_path):
     speech = Speech()
-    with TestClient(create_app(scenarios=Scenarios(), speech=speech, data_dir=tmp_path)) as client:
+    with TestClient(create_app(scenarios=Scenarios(), speech=speech, data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
         result = client.post("/v1/scenarios", json={"prompt": "Order at a café"})
         assert result.status_code == 200
         saved = result.json()
@@ -47,21 +47,21 @@ def test_scenario_persistence_and_speech_context(tmp_path):
         assert response.json()["audio_base64"] == "AAA="
         assert response.json()["user_transcript"] == "Un café"
         assert speech.calls[0].scenario == saved["scenario"]
-    with TestClient(create_app(data_dir=tmp_path)) as client:
+    with TestClient(create_app(data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
         assert client.get(f"/v1/scenarios/{saved['scenario_id']}").json() == saved
 
 
 @pytest.mark.parametrize("payload", [{}, {"prompt": " "}, {"prompt": "ok", "level": "Z9"},
     {"prompt": "ok", "unknown": 1}])
 def test_invalid_scenario_request(payload, tmp_path):
-    with TestClient(create_app(scenarios=Scenarios(), data_dir=tmp_path)) as client:
+    with TestClient(create_app(scenarios=Scenarios(), data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
         assert client.post("/v1/scenarios", json=payload).status_code == 422
 
 
 def test_unconfigured(monkeypatch, tmp_path):
     for key in ("OPENAI_API_KEY", "SCENARIO_MODEL", "SPEECH_ADAPTER", "ELEVENLABS_API_KEY"):
         monkeypatch.delenv(key, raising=False)
-    with TestClient(create_app(data_dir=tmp_path)) as client:
+    with TestClient(create_app(data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
         assert client.get("/health").json()["speech_ready"] is False
         assert client.post("/v1/scenarios", json={"prompt": "café"}).status_code == 503
         assert client.post("/v1/speech", params={"session_id": str(uuid4()), "npc_id": "luis"},
@@ -76,7 +76,7 @@ def test_unconfigured(monkeypatch, tmp_path):
 ])
 def test_audio_validation(media, data, extra, status, tmp_path):
     speech = Speech()
-    with TestClient(create_app(speech=speech, data_dir=tmp_path)) as client:
+    with TestClient(create_app(speech=speech, data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
         result = client.post("/v1/speech", params={"session_id": str(uuid4()), "npc_id": "luis", **extra},
                              content=data, headers={"Content-Type": media})
         assert result.status_code == status
@@ -95,7 +95,7 @@ def test_provider_failure(mode, status, tmp_path):
             if mode == "error":
                 raise RuntimeError("SECRET must not be returned")
             return {}
-    with TestClient(create_app(scenarios=Broken(), data_dir=tmp_path, timeout=.01)) as client:
+    with TestClient(create_app(scenarios=Broken(), data_dir=tmp_path, runs_dir=tmp_path / "runs", timeout=.01)) as client:
         result = client.post("/v1/scenarios", json={"prompt": "café"})
         assert result.status_code == status
         assert "SECRET" not in result.text
@@ -110,7 +110,7 @@ def test_bad_references():
 
 
 def test_unknown_scenario_and_npc(tmp_path):
-    with TestClient(create_app(scenarios=Scenarios(), speech=Speech(), data_dir=tmp_path)) as client:
+    with TestClient(create_app(scenarios=Scenarios(), speech=Speech(), data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
         assert client.get(f"/v1/scenarios/{uuid4()}").status_code == 404
         assert client.get("/v1/scenarios/not-a-uuid").status_code == 422
         saved = client.post("/v1/scenarios", json={"prompt": "café"}).json()
