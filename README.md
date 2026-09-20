@@ -100,13 +100,15 @@ Flip `status` to `"done"` (from code via `QuestManager.Instance.Complete(id)`, o
 file) and the HUD ticks it off. `action` names the server scene action that completes the quest
 automatically. Quest completion is also a trigger for NPC moves.
 
-### `scores.json` — the report card
+### `scores.json` — the bill
 
 The episode ends when every quest is done (the server's scene actions tick them) or when the
 player presses **Q**. `EpisodeSummary` (on the `Quests` object) then releases the cursor, closes
-the NPC sessions and shows a report card: an overall grade plus A+…F per quest for language
-performance, with one line of feedback each. The scoring API doesn't exist yet, so the grades
-are read from `scores.json`, which is the shape it should return:
+the NPC sessions and prints Café Nader's receipt: each quest is a line item whose "price" is its
+A+…F grade for language performance, with a line of feedback under it; the total is the overall
+grade, stamped `PAGADO` (or `PENDIENTE` for D/F). Header, table and waitress name are fields on
+the component. The scoring API doesn't exist yet, so grades are read from `scores.json`, which is
+the shape it should return:
 
 ```json
 {
@@ -119,7 +121,7 @@ are read from `scores.json`, which is the shape it should return:
 ```
 
 `id` is the quest id; an empty `overall` is averaged from the quest grades (4.3 scale); quests
-without an entry show `—`. **R** on the report card resets the quests and restarts the scene.
+without an entry show `—`. **R** on the receipt resets the quests and restarts the scene.
 
 ### `npcs.json`
 

@@ -1,17 +1,17 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using UnityEngine;
 using UnityEngine.InputSystem;
 using UnityEngine.SceneManagement;
 
 /// <summary>
-/// End-of-episode report card. The episode ends when every quest is done (as reported
-/// through <see cref="QuestManager"/>, i.e. by the conversation server's scene actions)
-/// or when the player presses <see cref="endKey"/>. The screen then grades each quest
-/// A+…F on language performance. Grades come from <see cref="scoresFile"/> for now; the
-/// scoring API isn't built yet, and this is the shape it should return (see scores.json).
-/// Same IMGUI approach as <see cref="QuestHud"/>, no Canvas needed.
+/// End of the episode: the bill. When every quest is done (as reported through
+/// <see cref="QuestManager"/>, i.e. by the conversation server's scene actions) or the
+/// player presses <see cref="endKey"/>, gameplay stops and Café Nader's till prints a
+/// receipt — each quest is a line item and its "price" is the A+…F grade for how the
+/// learner handled it in Spanish; the total is the overall grade, stamped on.
+/// Grades come from <see cref="scoresFile"/> until the scoring API exists; the file is
+/// the shape it should return (see scores.json). IMGUI like the rest of the HUD.
 /// </summary>
 [RequireComponent(typeof(QuestManager))]
 public class EpisodeSummary : MonoBehaviour
@@ -24,22 +24,28 @@ public class EpisodeSummary : MonoBehaviour
     public bool endWhenQuestsDone = true;
     [Tooltip("Ends the episode early (debug / walk away).")]
     public Key endKey = Key.Q;
-    [Tooltip("Restarts the scene from the report card.")]
+    [Tooltip("Restarts the scene from the receipt.")]
     public Key restartKey = Key.R;
 
-    [Header("Look")]
-    public int fontSize = 16;
-    public int titleFontSize = 30;
-    public int gradeFontSize = 64;
-    [Range(0f, 1f)] public float dimAlpha = 0.72f;
-    public Color panelColor = new(0.08f, 0.08f, 0.1f, 0.96f);
-    public Color gradeA = new(0.55f, 0.85f, 0.55f);
-    public Color gradeB = new(0.65f, 0.85f, 0.75f);
-    public Color gradeC = new(0.95f, 0.85f, 0.45f);
-    public Color gradeD = new(0.95f, 0.6f, 0.35f);
-    public Color gradeF = new(0.95f, 0.4f, 0.4f);
+    [Header("Receipt")]
+    [Tooltip("Printed header lines. The first is the café's name.")]
+    public string[] header = { "CAFÉ NADER", "Av. Nader 5 · Centro · Cancún, Q.R." };
+    [Tooltip("NPC id whose displayName goes on the 'Te atendió' line. Empty = omit.")]
+    public string waiterId = "maria";
+    public string tableLabel = "MESA 2";
+    [Tooltip("Slip width in design pixels; the whole receipt scales with screen height.")]
+    public float width = 440f;
+    [Tooltip("Slight tilt so it reads as paper dropped on the table, not a dialog.")]
+    public float tiltDegrees = -1.5f;
+    public int fontSize = 15;
+    public Color paper = new(0.96f, 0.94f, 0.88f);
+    public Color ink = new(0.17f, 0.16f, 0.15f);
+    public Color faintInk = new(0.17f, 0.16f, 0.15f, 0.55f);
+    [Tooltip("Rubber stamp for the total; also the ink for D and F lines.")]
+    public Color stampRed = new(0.72f, 0.16f, 0.13f, 0.85f);
+    [Range(0f, 1f)] public float dimAlpha = 0.6f;
 
-    /// <summary>True once the report card is up; gameplay input is released.</summary>
+    /// <summary>True once the receipt is up; gameplay input is released.</summary>
     public bool Ended { get; private set; }
     public ScoreSheet Scores { get; private set; }
     public event Action Finished;
@@ -63,7 +69,11 @@ public class EpisodeSummary : MonoBehaviour
     QuestManager quests;
     QuestHud hud;
     bool sawTodo;
-    GUIStyle titleStyle, subtitleStyle, rowStyle, commentStyle, gradeStyle, bigGradeStyle, footerStyle;
+    string printedAt;
+
+    Font mono;
+    Texture2D teeth;
+    GUIStyle body, centred, small, smallCentred, bold, title, stamp;
 
     string ScoresPath => Path.Combine(Application.streamingAssetsPath, scoresFile);
 
@@ -91,6 +101,8 @@ public class EpisodeSummary : MonoBehaviour
     {
         if (quests != null)
             quests.Changed -= OnQuestsChanged;
+        if (teeth != null)
+            Destroy(teeth);
         if (Instance == this)
             Instance = null;
     }
@@ -134,13 +146,14 @@ public class EpisodeSummary : MonoBehaviour
             End();
     }
 
-    /// <summary>Stop the episode and show the report card.</summary>
+    /// <summary>Stop the episode and print the bill.</summary>
     public void End()
     {
         if (Ended)
             return;
         Ended = true;
         Scores = LoadScores();
+        printedAt = DateTime.Now.ToString("dd/MM/yyyy  HH:mm");
 
         Cursor.lockState = CursorLockMode.None;
         Cursor.visible = true;
@@ -243,21 +256,13 @@ public class EpisodeSummary : MonoBehaviour
         return n == 0 ? "—" : Letter(sum / n);
     }
 
-    Color GradeColor(string grade)
-    {
-        char c = string.IsNullOrEmpty(grade) ? '?' : char.ToUpperInvariant(grade.Trim()[0]);
-        return c switch
-        {
-            'A' => gradeA,
-            'B' => gradeB,
-            'C' => gradeC,
-            'D' => gradeD,
-            'F' => gradeF,
-            _ => new Color(0.7f, 0.7f, 0.7f),
-        };
-    }
+    static bool IsPoor(string grade) =>
+        !string.IsNullOrEmpty(grade) && (grade[0] == 'D' || grade[0] == 'F');
 
-    // ---- drawing ----------------------------------------------------------------
+    // ---- the receipt ------------------------------------------------------------
+
+    const float Pad = 26f;
+    const float ToothHeight = 8f;
 
     void OnGUI()
     {
@@ -265,99 +270,213 @@ public class EpisodeSummary : MonoBehaviour
             return;
         EnsureStyles();
 
-        var prev = GUI.color;
-        GUI.color = new Color(0f, 0f, 0f, dimAlpha);
+        var prevColor = GUI.color;
+        var prevMatrix = GUI.matrix;
+
+        GUI.color = new Color(0.05f, 0.03f, 0.02f, dimAlpha);
         GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), Texture2D.whiteTexture);
 
-        var list = quests.Quests?.quests ?? Array.Empty<Quest>();
-        float width = Mathf.Min(Screen.width * 0.8f, 820f);
-        float pad = 28f;
-        float inner = width - pad * 2f;
-        float gradeCol = 64f;
-        float textCol = inner - gradeCol - 16f;
+        // Lay the slip out in design units, then place it with one matrix: scale with
+        // the screen, a touch of tilt, centred.
+        float inner = width - Pad * 2f;
+        float height = Measure(inner);
+        float scale = Mathf.Clamp(Screen.height / (height + 120f), 0.6f, Mathf.Max(0.6f, Screen.height / 820f));
+        var centre = new Vector2(Screen.width / 2f, Screen.height / 2f);
+        GUI.matrix = Matrix4x4.TRS(centre, Quaternion.Euler(0f, 0f, tiltDegrees), Vector3.one * scale)
+                   * Matrix4x4.Translate(new Vector3(-width / 2f, -height / 2f, 0f));
 
-        // Measure.
-        float rowH = rowStyle.CalcSize(new GUIContent("Ag")).y;
-        float height = pad + titleStyle.CalcSize(new GUIContent("A")).y + 4f + bigGradeStyle.CalcSize(new GUIContent("A")).y + 12f;
-        if (!string.IsNullOrEmpty(Scores?.summary))
-            height += subtitleStyle.CalcHeight(new GUIContent(Scores.summary), inner) + 16f;
-        var rows = new List<(Quest q, QuestScore s, float h)>();
+        // Paper: shadow, body, torn top and bottom.
+        var slip = new Rect(0f, 0f, width, height);
+        GUI.color = new Color(0f, 0f, 0f, 0.4f);
+        GUI.DrawTexture(new Rect(slip.x + 6f, slip.y + 10f, slip.width, slip.height), Texture2D.whiteTexture);
+        GUI.color = paper;
+        GUI.DrawTexture(slip, Texture2D.whiteTexture);
+        float tiles = width / teeth.width;
+        GUI.DrawTextureWithTexCoords(new Rect(0f, -ToothHeight, width, ToothHeight), teeth, new Rect(0f, 1f, tiles, -1f));
+        GUI.DrawTextureWithTexCoords(new Rect(0f, height, width, ToothHeight), teeth, new Rect(0f, 0f, tiles, 1f));
+
+        GUI.color = prevColor;
+        Print(inner, draw: true);
+
+        GUI.matrix = prevMatrix;
+        GUI.color = prevColor;
+    }
+
+    float Measure(float inner) => Print(inner, draw: false);
+
+    /// <summary>Walks the receipt top to bottom; draws when asked, always returns the height used.</summary>
+    float Print(float inner, bool draw)
+    {
+        float x = Pad;
+        float y = Pad + 4f;
+        float line = body.CalcSize(new GUIContent("M")).y;
+        float ch = body.CalcSize(new GUIContent("M")).x; // monospace: one character
+        float gradeCol = ch * 3f;
+
+        void Text(string s, GUIStyle style, Color color, float w = -1f, float indent = 0f)
+        {
+            if (string.IsNullOrEmpty(s))
+                return;
+            float h = style.CalcHeight(new GUIContent(s), w < 0f ? inner - indent : w);
+            if (draw)
+            {
+                style.normal.textColor = color;
+                GUI.Label(new Rect(x + indent, y, w < 0f ? inner - indent : w, h), s, style);
+            }
+            y += h;
+        }
+
+        void Rule()
+        {
+            y += line * 0.35f;
+            if (draw)
+            {
+                GUI.color = faintInk;
+                // Dashes the way a thermal printer does them.
+                for (float dx = 0f; dx < inner; dx += ch)
+                    GUI.DrawTexture(new Rect(x + dx, y, ch * 0.55f, 1.5f), Texture2D.whiteTexture);
+                GUI.color = Color.white;
+            }
+            y += line * 0.5f;
+        }
+
+        void TwoUp(string left, string right, GUIStyle style, Color color)
+        {
+            if (draw)
+            {
+                style.normal.textColor = color;
+                style.alignment = TextAnchor.MiddleLeft;
+                GUI.Label(new Rect(x, y, inner, line), left, style);
+                style.alignment = TextAnchor.MiddleRight;
+                GUI.Label(new Rect(x, y, inner, line), right, style);
+                style.alignment = TextAnchor.MiddleLeft;
+            }
+            y += line;
+        }
+
+        // Header.
+        for (int i = 0; i < header.Length; i++)
+            Text(header[i], i == 0 ? title : smallCentred, i == 0 ? ink : faintInk);
+        Rule();
+        TwoUp(printedAt, tableLabel, body, ink);
+        string waiter = WaiterName();
+        if (!string.IsNullOrEmpty(waiter))
+            Text($"Te atendió: {waiter}", body, ink);
+        Rule();
+
+        // Line items: quest text, dotted leader, grade in the price column.
+        var list = quests.Quests?.quests ?? Array.Empty<Quest>();
+        float textCol = inner - gradeCol - ch;
         foreach (var q in list)
         {
             var s = ScoreFor(q.id);
-            float h = rowH;
-            if (!string.IsNullOrEmpty(s?.comment))
-                h += commentStyle.CalcHeight(new GUIContent(s.comment), textCol) + 2f;
-            rows.Add((q, s, h));
-            height += h + 10f;
+            string grade = q.IsDone && !string.IsNullOrEmpty(s?.grade) ? s.grade.Trim().ToUpperInvariant() : "—";
+            var gradeInk = IsPoor(grade) ? stampRed : grade == "—" ? faintInk : ink;
+
+            string label = q.text ?? q.id;
+            float labelW = body.CalcSize(new GUIContent(label)).x;
+            float h = body.CalcHeight(new GUIContent(label), textCol);
+            if (draw)
+            {
+                body.normal.textColor = ink;
+                GUI.Label(new Rect(x, y, textCol, h), label, body);
+                if (labelW <= textCol - ch * 2f)
+                {
+                    int dots = Mathf.FloorToInt((textCol - labelW) / ch) - 1;
+                    body.normal.textColor = faintInk;
+                    GUI.Label(new Rect(x + labelW + ch * 0.5f, y, textCol - labelW, line), new string('.', Mathf.Max(0, dots)), body);
+                }
+                bold.normal.textColor = gradeInk;
+                bold.alignment = TextAnchor.MiddleRight;
+                GUI.Label(new Rect(x + inner - gradeCol, y + h - line, gradeCol, line), grade, bold);
+                bold.alignment = TextAnchor.MiddleLeft;
+            }
+            y += h;
+
+            string note = q.IsDone ? s?.comment : "no llegaste hasta aquí";
+            Text(note, small, faintInk, indent: ch * 2f);
+            y += line * 0.35f;
         }
-        height += footerStyle.CalcSize(new GUIContent("A")).y + pad;
 
-        var panel = new Rect((Screen.width - width) / 2f, Mathf.Max(24f, (Screen.height - height) / 2f), width, height);
-        GUI.color = panelColor;
-        GUI.DrawTexture(panel, Texture2D.whiteTexture);
-        GUI.color = prev;
-
-        float x = panel.x + pad;
-        float y = panel.y + pad;
-
-        string title = string.IsNullOrEmpty(quests.Quests?.title) ? "Episode complete" : quests.Quests.title;
-        float titleH = titleStyle.CalcSize(new GUIContent(title)).y;
-        GUI.Label(new Rect(x, y, inner, titleH), title, titleStyle);
-        y += titleH + 4f;
-
+        Rule();
         string overall = OverallGrade();
-        float bigH = bigGradeStyle.CalcSize(new GUIContent(overall)).y;
-        bigGradeStyle.normal.textColor = GradeColor(overall);
-        GUI.Label(new Rect(x, y, inner, bigH), overall, bigGradeStyle);
-        y += bigH + 12f;
+        float totalY = y;
+        TwoUp("TOTAL", overall, bold, IsPoor(overall) ? stampRed : ink);
+        Rule();
 
         if (!string.IsNullOrEmpty(Scores?.summary))
         {
-            float h = subtitleStyle.CalcHeight(new GUIContent(Scores.summary), inner);
-            GUI.Label(new Rect(x, y, inner, h), Scores.summary, subtitleStyle);
-            y += h + 16f;
+            Text(Scores.summary, small, ink);
+            Rule();
         }
 
-        foreach (var (q, s, h) in rows)
-        {
-            GUI.color = new Color(1f, 1f, 1f, 0.08f);
-            GUI.DrawTexture(new Rect(x, y - 4f, inner, h + 8f), Texture2D.whiteTexture);
-            GUI.color = prev;
+        y += line * 0.2f;
+        Text("¡Gracias por tu visita!", centred, ink);
+        Text($"Pulsa {restartKey} para otra ronda", smallCentred, faintInk);
+        y += Pad;
 
-            string grade = string.IsNullOrEmpty(s?.grade) ? "—" : s.grade.Trim().ToUpperInvariant();
-            gradeStyle.normal.textColor = GradeColor(grade);
-            GUI.Label(new Rect(x, y, gradeCol, rowH), grade, gradeStyle);
+        // The grade is the total; the stamp says whether the bill is settled.
+        if (draw)
+            Stamp(IsPoor(overall) ? "PENDIENTE" : "PAGADO", new Vector2(x + inner * 0.5f, totalY + line * 0.5f));
 
-            rowStyle.normal.textColor = q.IsDone ? Color.white : new Color(0.75f, 0.75f, 0.75f);
-            string text = q.IsDone ? q.text : q.text + "  (not reached)";
-            GUI.Label(new Rect(x + gradeCol + 16f, y, textCol, rowH), text, rowStyle);
-            if (!string.IsNullOrEmpty(s?.comment))
-            {
-                float ch = commentStyle.CalcHeight(new GUIContent(s.comment), textCol);
-                GUI.Label(new Rect(x + gradeCol + 16f, y + rowH + 2f, textCol, ch), s.comment, commentStyle);
-            }
-            y += h + 10f;
-        }
+        return y + ToothHeight;
+    }
 
-        float footH = footerStyle.CalcSize(new GUIContent("A")).y;
-        GUI.Label(new Rect(x, panel.yMax - pad - footH, inner, footH), $"Press {restartKey} to play again", footerStyle);
+    /// <summary>A rubber stamp across the total: bordered box, tilted against the slip.</summary>
+    void Stamp(string text, Vector2 centre)
+    {
+        var size = stamp.CalcSize(new GUIContent(text));
+        var box = new Rect(centre.x - size.x / 2f - 12f, centre.y - size.y / 2f - 2f, size.x + 24f, size.y + 4f);
+        var saved = GUI.matrix;
+        GUI.matrix *= Matrix4x4.TRS(centre, Quaternion.Euler(0f, 0f, -7f), Vector3.one) * Matrix4x4.Translate(-centre);
+        GUI.color = stampRed;
+        const float b = 3f;
+        GUI.DrawTexture(new Rect(box.x, box.y, box.width, b), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(box.x, box.yMax - b, box.width, b), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(box.x, box.y, b, box.height), Texture2D.whiteTexture);
+        GUI.DrawTexture(new Rect(box.xMax - b, box.y, b, box.height), Texture2D.whiteTexture);
+        GUI.color = Color.white;
+        stamp.normal.textColor = stampRed;
+        GUI.Label(box, text, stamp);
+        GUI.matrix = saved;
+    }
+
+    string WaiterName()
+    {
+        if (string.IsNullOrEmpty(waiterId) || NpcManager.Instance == null)
+            return "";
+        var npc = NpcManager.Instance.Find(waiterId);
+        var who = npc != null ? npc.GetComponent<NpcInteractable>() : null;
+        return who != null ? who.displayName : "";
     }
 
     void EnsureStyles()
     {
-        if (titleStyle != null)
+        if (body != null)
             return;
-        titleStyle = new GUIStyle(GUI.skin.label) { fontSize = titleFontSize, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleCenter };
-        titleStyle.normal.textColor = Color.white;
-        bigGradeStyle = new GUIStyle(titleStyle) { fontSize = gradeFontSize };
-        subtitleStyle = new GUIStyle(GUI.skin.label) { fontSize = fontSize, wordWrap = true, alignment = TextAnchor.MiddleCenter, fontStyle = FontStyle.Italic };
-        subtitleStyle.normal.textColor = new Color(0.85f, 0.85f, 0.85f);
-        rowStyle = new GUIStyle(GUI.skin.label) { fontSize = fontSize, fontStyle = FontStyle.Bold, alignment = TextAnchor.MiddleLeft };
-        commentStyle = new GUIStyle(GUI.skin.label) { fontSize = fontSize - 3, wordWrap = true, alignment = TextAnchor.UpperLeft };
-        commentStyle.normal.textColor = new Color(0.8f, 0.8f, 0.8f);
-        gradeStyle = new GUIStyle(rowStyle) { fontSize = fontSize + 6, alignment = TextAnchor.MiddleCenter };
-        footerStyle = new GUIStyle(GUI.skin.label) { fontSize = fontSize - 2, alignment = TextAnchor.MiddleCenter };
-        footerStyle.normal.textColor = new Color(0.7f, 0.7f, 0.7f);
+        mono = Font.CreateDynamicFontFromOSFont(
+            new[] { "Courier New", "Liberation Mono", "DejaVu Sans Mono", "Menlo", "Consolas", "Nimbus Mono PS", "Courier" }, fontSize);
+        if (mono == null)
+            mono = GUI.skin.font;
+
+        body = new GUIStyle(GUI.skin.label) { font = mono, fontSize = fontSize, wordWrap = true, alignment = TextAnchor.MiddleLeft, richText = false };
+        body.padding = new RectOffset(0, 0, 0, 0);
+        centred = new GUIStyle(body) { alignment = TextAnchor.MiddleCenter };
+        small = new GUIStyle(body) { fontSize = fontSize - 2 };
+        smallCentred = new GUIStyle(small) { alignment = TextAnchor.MiddleCenter };
+        bold = new GUIStyle(body) { fontStyle = FontStyle.Bold, wordWrap = false };
+        title = new GUIStyle(bold) { fontSize = fontSize + 6, alignment = TextAnchor.MiddleCenter };
+        stamp = new GUIStyle(bold) { fontSize = fontSize + 12, alignment = TextAnchor.MiddleCenter };
+
+        // Sawtooth for the torn edges: one tooth per tile, tinted with GUI.color when drawn.
+        const int w = 16, h = 8;
+        teeth = new Texture2D(w, h, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Repeat };
+        for (int px = 0; px < w; px++)
+        {
+            int depth = h - Mathf.Abs(px - w / 2); // tooth points down from the paper
+            for (int py = 0; py < h; py++)
+                teeth.SetPixel(px, py, (h - 1 - py) < depth ? Color.white : Color.clear);
+        }
+        teeth.Apply();
     }
 }

@@ -762,16 +762,19 @@ MonoBehaviour:
   endWhenQuestsDone: 1
   endKey: 31
   restartKey: 32
-  fontSize: 16
-  titleFontSize: 30
-  gradeFontSize: 64
-  dimAlpha: 0.72
-  panelColor: {r: 0.08, g: 0.08, b: 0.1, a: 0.96}
-  gradeA: {r: 0.55, g: 0.85, b: 0.55, a: 1}
-  gradeB: {r: 0.65, g: 0.85, b: 0.75, a: 1}
-  gradeC: {r: 0.95, g: 0.85, b: 0.45, a: 1}
-  gradeD: {r: 0.95, g: 0.6, b: 0.35, a: 1}
-  gradeF: {r: 0.95, g: 0.4, b: 0.4, a: 1}
+  header:
+  - "CAF\xC9 NADER"
+  - "Av. Nader 5 \xB7 Centro \xB7 Canc\xFAn, Q.R."
+  waiterId: maria
+  tableLabel: MESA 2
+  width: 440
+  tiltDegrees: -1.5
+  fontSize: 15
+  paper: {r: 0.96, g: 0.94, b: 0.88, a: 1}
+  ink: {r: 0.17, g: 0.16, b: 0.15, a: 1}
+  faintInk: {r: 0.17, g: 0.16, b: 0.15, a: 0.55}
+  stampRed: {r: 0.72, g: 0.16, b: 0.13, a: 0.85}
+  dimAlpha: 0.6
 --- !u!1 &2000000000
 GameObject:
   m_ObjectHideFlags: 0
