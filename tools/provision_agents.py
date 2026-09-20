@@ -33,6 +33,7 @@ from dotenv import load_dotenv  # noqa: E402
 from orchestrator.scene import ScenePack, default_pack_dir  # noqa: E402
 
 load_dotenv(ROOT / "orchestrator" / ".env")
+load_dotenv(ROOT / ".env")  # repo-root .env is the other place the key lives
 API = "https://api.elevenlabs.io"
 KEY = os.environ.get("ELEVENLABS_API_KEY", "")
 
@@ -235,7 +236,7 @@ def render_greetings(pack: ScenePack, agent_ids: dict[str, str], apply: bool) ->
 
 def write_env(ids: dict[str, str]) -> None:
     path = ROOT / "orchestrator" / ".env"
-    text = path.read_text()
+    text = path.read_text() if path.exists() else ""
     for npc_id, agent_id in ids.items():
         line = f"AGENT_ID_{npc_id.upper()}={agent_id}"
         pattern = rf"(?m)^AGENT_ID_{re.escape(npc_id.upper())}=.*$"

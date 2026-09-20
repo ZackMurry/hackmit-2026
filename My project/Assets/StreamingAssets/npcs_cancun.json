@@ -1,14 +1,14 @@
 {
   "npcs": [
     {
-      "id": "mariana",
-      "displayName": "Mariana",
+      "id": "maria",
+      "displayName": "Maria",
       "avatar": "Avatars/Female_Adult_08/Export/Female_Adult_08_facial",
       "position": { "x": 3.3, "y": -1.5, "z": 0.8 },
       "yaw": 90,
       "scale": 0.9,
       "walkSpeed": 0.7,
-      "greeting": "¡Hola, bienvenido! ¿Tú eres el amigo de Luis? Él ya está en la mesa. Sígueme, por favor.",
+      "greeting": "¡Buenas tardes! Pásale, joven. Tu amigo ya está en la mesa. Ven conmigo, te llevo.",
       "moves": [
         {
           "id": "to_table",
@@ -24,9 +24,9 @@
         },
         {
           "id": "back_to_counter",
-          "trigger": "move",
-          "after": "to_table",
-          "delay": 8,
+          "trigger": "action",
+          "after": "serve_order",
+          "delay": 2,
           "path": [
             { "x": 3.6, "y": -1.5, "z": 10.4 },
             { "x": 0.0, "y": -1.5, "z": 10.5 },
@@ -45,7 +45,7 @@
       "scale": 0.9,
       "walkSpeed": 0.8,
       "seat": "table_a",
-      "greeting": "¡Ey, por fin llegas! Siéntate, siéntate. ¿Qué tal el viaje?",
+      "greeting": "¡Hola! ¿Qué tal? Siéntate, siéntate. Qué bueno que llegaste.",
       "moves": []
     }
   ]

@@ -17,7 +17,7 @@
       "voice_id": "qGUobVOQFekqmtk6YZdK",
       "voice_name": "Maria (MX female)",
       "prompt_file": "prompts/maria.md",
-      "first_message": "¡Buenas tardes! Pásale, joven. Tu amigo ya está en la mesa, ven conmigo. ¿Qué te sirvo?",
+      "first_message": "¡Buenas tardes! Pásale, joven. Tu amigo ya está en la mesa. Ven conmigo, te llevo.",
       "tools": ["serve_order", "show_bill", "play_gesture"],
       "max_duration_seconds": 180,
       "tts": { "speed": 1.0, "stability": 0.45, "similarity_boost": 0.8 },

@@ -19,8 +19,8 @@ python3 -m venv .venv
 .venv/bin/python -m orchestrator
 ```
 
-Configuration comes from `orchestrator/.env`, or from the environment, which takes
-precedence:
+Configuration comes from `orchestrator/.env` (or, as a fallback, the repo-root `.env`), or
+from the environment, which takes precedence:
 
 ```sh
 export OPENAI_API_KEY='your-key'
@@ -31,7 +31,7 @@ export AGENT_ID_LUIS='...'
 ```
 
 The server listens on `127.0.0.1:8765`. Interactive documentation: `/docs`;
-OpenAPI schema: `/openapi.json`; readiness flags: `/health`. Running `python -m orchestrator` loads `orchestrator/.env`; exported environment
+OpenAPI schema: `/openapi.json`; readiness flags: `/health`. Running `python -m orchestrator` loads `orchestrator/.env`, then the repo-root `.env`; exported environment
 variables take precedence. Never commit credentials. Direct Uvicorn startup requires exported variables. This is a local development API, without
 public authentication or cross-origin browser access configured.
 

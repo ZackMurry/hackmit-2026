@@ -20,19 +20,31 @@ what comes back — speech recognition, the character and the voice are the serv
   and plays the returned audio through the NPC's lip-sync. `user_transcript` / `agent_transcript`
   are subtitled at the bottom of the screen. Each NPC keeps its own `session_id` (conversation
   memory) and closes it when the scene ends. WAV, raw PCM, MP3 and OGG replies are all decoded.
+  One `run_id` per Play session is sent to every NPC, so Luis knows what you ordered from Maria;
+  `learnerName` (optional) is how the characters address you.
+- `CastClient` (same object) fetches the authored cast from `/v1/npcs` when the scene starts and,
+  for every spawned NPC whose id (or server alias) matches a character, swaps in the server's
+  opening line as the greeting together with its pre-recorded audio (`/v1/npcs/{id}/greeting`,
+  same voice as the live agent, no API spend). Characters without a configured agent are
+  flagged in the console.
+- **Scene actions**: a reply may carry `actions` the character performed mid-conversation
+  (`serve_order`, `show_bill`, `play_gesture`; see `docs/api.md`). The client mirrors them in the
+  world: quests whose `action` matches tick off, and NPC moves with `"trigger": "action"` start
+  (e.g. Maria heads back to the counter once she has taken the order). Gestures are logged only —
+  there are no gesture animations yet.
 - `ScenarioClient` (same object) loads a saved scenario (`scenarioId`) or generates one from
   `prompt` / `language` / `level` via `/v1/scenarios` when the scene starts, then applies it:
   goals → the quest list, characters → NPC names, ids and opening lines (matched by id, else by
   order in `npcs.json`), and `scenario_id` is attached to every speech turn. The last generated
   id is remembered in PlayerPrefs so replaying doesn't regenerate.
-- NPC `id`s in `npcs.json` are the server's `npc_id`s and need a configured agent
-  (`AGENT_ID_MARIA`, `AGENT_ID_LUIS`, …).
+- NPC `id`s in `npcs.json` are the server's `npc_id`s (`maria`, `luis`; `mariana` is still
+  accepted as an alias) and need a configured agent (`AGENT_ID_MARIA`, `AGENT_ID_LUIS`, …).
 
-Lines without server audio — greetings, and every reply when `serverUrl` is empty — are voiced
-with the prerecorded `tools/sample_es.mp3` (copied to `Assets/Resources/Audio/`), so the
-interaction, audio positioning and lip-sync can be tested offline.
-Goal completion isn't reported by the API yet, so quests only tick via `quests.json` /
-`QuestManager.Complete`.
+Lines without server audio — greetings when the server is down, and every reply when `serverUrl`
+is empty — are voiced with the prerecorded `tools/sample_es.mp3` (copied to
+`Assets/Resources/Audio/`), so the interaction, audio positioning and lip-sync can be tested
+offline. Goal *scoring* isn't reported by the API yet; quests tick via scene actions
+(`"action"` in `quests.json`), `quests.json` edits or `QuestManager.Complete`.
 
 ## Content is JSON
 
@@ -45,13 +57,14 @@ and is re-read while the game is running, so you can tune it without leaving Pla
 {
   "title": "Café",
   "quests": [
-    { "id": "order", "text": "Order something in Spanish", "status": "todo" }
+    { "id": "order", "text": "Order something in Spanish", "status": "todo", "action": "serve_order" }
   ]
 }
 ```
 
-Flip `status` to `"done"` (from the conversation backend via `QuestManager.Instance.Complete(id)`,
-or by editing the file) and the HUD ticks it off. Quest completion is also a trigger for NPC moves.
+Flip `status` to `"done"` (from code via `QuestManager.Instance.Complete(id)`, or by editing the
+file) and the HUD ticks it off. `action` names the server scene action that completes the quest
+automatically. Quest completion is also a trigger for NPC moves.
 
 ### `npcs.json`
 
@@ -93,9 +106,9 @@ lip-synced speech, E-to-talk, walking, schedule).
 | `position`, `yaw`, `scale` | Where the feet start (world units), heading in degrees (0 = +Z), avatar scale.                          |
 | `walkSpeed`, `turnSpeed`   | m/s and deg/s defaults for this NPC.                                                                    |
 | `idleClips`, `walkClip`    | Resources paths of mocap clips. No walk clip → procedural gait.                                         |
-| `greeting`                 | Line said (placeholder voice) when the player first walks up; a scenario's `opening_line` overrides it. |
+| `greeting`                 | Line said when the player first walks up (offline fallback; `CastClient` replaces it with the server's recorded opening line). |
 | `seat`                     | Seat id from `seats.json` to start the scene sitting in.                                                |
-| `moves[].trigger`          | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`), `"greet"` (this NPC finished its greeting). |
+| `moves[].trigger`          | `"start"` (scene load), `"quest"` (quest `after` completed), `"move"` (this NPC finished move `after`), `"greet"` (this NPC finished its greeting), `"action"` (server reported scene action `after` for this NPC). |
 | `moves[].delay`            | Seconds to wait after the trigger, e.g. walk over 4 s after `order` is done.                     |
 | `moves[].path`             | World-space waypoints. Y is a hint; feet snap to the collider below.                                    |
 | `moves[].speed`            | Override m/s for this move (0 = NPC default).                                                           |
@@ -133,11 +146,15 @@ along +z; it opens onto the sand along its +x side: a doorway at the south-east 
 
 ### CancunCafe flow
 
-The player spawns on the sand outside the south-east doorway facing the café. Mariana (waitress)
-waits just inside; when the player walks up she greets them and says "sígueme", then walks up the
-aisle to the table (`"trigger": "greet"`) and later back to the counter. Luis is already seated at `table_a`
-(`"seat"`); the free chair opposite is `table_b` — press **F** to sit, then hold **E** to talk to
-him. Avatars: `Avatars/Female_Adult_08` and `Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
+The player spawns on the sand outside the south-east doorway facing the café. Maria (waitress)
+waits just inside; when the player walks up she greets them ("Tu amigo ya está en la mesa. Ven
+conmigo"), then walks up the aisle to the table (`"trigger": "greet"`) and waits there. Luis is
+already seated at `table_a` (`"seat"`); the free chair opposite is `table_b` — press **F** to sit.
+Look at Maria and hold **E** to order; when the server reports `serve_order` the `order` quest
+ticks and she heads back to the counter (`"trigger": "action"`). Then hold **E** facing Luis to
+chat — he knows what you ordered. The characters, prompts, menu and greeting audio live in
+`scenarios/cafe_cancun/` (see `docs/api.md`). Avatars: `Avatars/Female_Adult_08` and
+`Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
 
 ## Worlds
 
@@ -159,7 +176,9 @@ uv run tools/spz_to_collider.py Assets/Worlds/CancunCafe/cancun_cafe_model.spz \
 
 ## Python API
 
-See [API setup and endpoint contracts](docs/api.md). `uv sync`, fill in
-`orchestrator/.env`, then `uv run python -m orchestrator`.
+See [API setup and endpoint contracts](docs/api.md). `uv sync`, put `ELEVENLABS_API_KEY`,
+`AGENT_ID_MARIA` and `AGENT_ID_LUIS` in `orchestrator/.env` or the repo-root `.env` (both are
+git-ignored; `tools/provision_agents.py --apply` creates the agents and prints the ids), then
+`uv run python -m orchestrator`.
 Unity remains separately owned. The API includes an ElevenLabs adapter based on
 the teammate's voice demo scripts; see the API docs for keys and agent IDs.

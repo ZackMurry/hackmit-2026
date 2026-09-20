@@ -101,6 +101,18 @@ public class QuestManager : MonoBehaviour
     /// <summary>Mark a quest done. Returns false if the id is unknown.</summary>
     public bool Complete(string id) => SetStatus(id, Quest.Done);
 
+    /// <summary>Mark every quest whose <see cref="Quest.action"/> is this scene action done. Returns false if none matched.</summary>
+    public bool CompleteByAction(string action)
+    {
+        if (string.IsNullOrEmpty(action))
+            return false;
+        bool any = false;
+        foreach (var quest in Quests.quests)
+            if (quest.action == action)
+                any |= Complete(quest.id);
+        return any;
+    }
+
     public bool SetStatus(string id, string status)
     {
         var quest = Find(id);
@@ -142,6 +154,8 @@ public class Quest
     public string id;
     public string text;
     public string status = Todo;
+    [Tooltip("Scene action from the conversation server that completes this quest (e.g. serve_order). Empty = manual.")]
+    public string action = "";
 
     public bool IsDone => string.Equals(status, Done, StringComparison.OrdinalIgnoreCase);
 }

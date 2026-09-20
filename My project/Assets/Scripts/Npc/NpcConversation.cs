@@ -15,10 +15,12 @@ using UnityEngine.InputSystem;
 public class NpcConversation : MonoBehaviour
 {
     [Header("Character")]
-    [Tooltip("npc_id sent with every turn; must match an agent configured on the server (e.g. luis, mariana).")]
+    [Tooltip("npc_id sent with every turn; must match an agent configured on the server (e.g. luis, maria).")]
     public string npcId = "";
-    [Tooltip("Said (placeholder voice) the first time the player walks up. Empty = none.")]
+    [Tooltip("Said the first time the player walks up. Empty = none. CastClient replaces it with the server's opening line.")]
     public string greeting = "";
+    [Tooltip("Pre-recorded audio for the greeting (fetched by CastClient). Null = placeholder voice.")]
+    public AudioClip greetingClip;
 
     [Header("Input")]
     public Key talkKey = Key.E;
@@ -56,6 +58,8 @@ public class NpcConversation : MonoBehaviour
     public event Action<Exchange> Replied;
     /// <summary>Fired once, when the greeting has been said (see <see cref="NpcMove.TriggerGreet"/>).</summary>
     public event Action Greeted;
+    /// <summary>Fired for each scene action the server reports with a reply (serve_order, show_bill, play_gesture).</summary>
+    public event Action<ConversationClient.SceneAction> Acted;
 
     NpcSpeaker speaker;
     NpcInteractable interactable;
@@ -169,6 +173,8 @@ public class NpcConversation : MonoBehaviour
 
         Last = new Exchange { heard = reply.heard, reply = reply.text, time = Time.time };
         Replied?.Invoke(Last);
+        foreach (var action in reply.actions)
+            Act(action);
 
         yield return Say(reply.text, reply.clip);
 
@@ -180,7 +186,8 @@ public class NpcConversation : MonoBehaviour
     {
         Busy = true;
         Last = new Exchange { reply = greeting, time = Time.time };
-        yield return Say(greeting);
+        yield return Say(greeting, greetingClip);
+        greetingClip = null; // Say() released it
         Busy = false;
         Greeted?.Invoke();
     }
@@ -204,6 +211,26 @@ public class NpcConversation : MonoBehaviour
         if (clip != null)
             Destroy(clip);
         Status = "";
+    }
+
+    /// <summary>
+    /// The server already answered the character, so this only mirrors the action in the
+    /// world: quests tagged with it tick off, and NpcSchedule may start a move
+    /// (<see cref="NpcMove.TriggerAction"/>). Gestures have no animations yet.
+    /// </summary>
+    void Act(ConversationClient.SceneAction action)
+    {
+        if (action == null || string.IsNullOrEmpty(action.action))
+            return;
+        string detail = action.action switch
+        {
+            "serve_order" or "show_bill" => $"{string.Join(", ", action.items ?? Array.Empty<string>())} = {action.total_mxn} MXN",
+            "play_gesture" => action.gesture,
+            _ => "",
+        };
+        Debug.Log($"{name}: action {action.action} {detail}");
+        QuestManager.Instance?.CompleteByAction(action.action);
+        Acted?.Invoke(action);
     }
 
     void Fail(string message)

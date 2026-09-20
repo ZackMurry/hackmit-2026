@@ -23,6 +23,14 @@ public class ConversationClient : MonoBehaviour
     public string scenarioId = "";
     [Tooltip("Provider calls are capped at 60 s server-side.")]
     public int timeoutSeconds = 75;
+    [Tooltip("How the characters address the player (dynamic variable on the server). Empty = server default.")]
+    public string learnerName = "";
+
+    /// <summary>
+    /// One visit: the same run_id goes to every NPC so what the player ordered from the
+    /// waitress is known to the friend at the table. New every time the scene starts.
+    /// </summary>
+    public string RunId { get; private set; }
 
     /// <summary>One learner turn: a WAV recording for one NPC within one session.</summary>
     public class Turn
@@ -38,6 +46,47 @@ public class ConversationClient : MonoBehaviour
         public string heard = "";  // user_transcript (may be empty)
         public string text = "";   // agent_transcript: the caption (may be empty)
         public AudioClip clip;     // decoded NPC audio, or null
+        public SceneAction[] actions = Array.Empty<SceneAction>(); // scene actions this turn caused, in order
+    }
+
+    /// <summary>
+    /// Something the character did to the world mid-conversation (docs/api.md "Scene actions").
+    /// Only the fields for that <see cref="action"/> are filled: <c>serve_order</c> / <c>show_bill</c>
+    /// carry the order and its total, <c>play_gesture</c> carries <see cref="gesture"/>.
+    /// </summary>
+    [Serializable]
+    public class SceneAction
+    {
+        public string action;
+        public string npc_id;
+        public string[] items;
+        public bool to_go;
+        public int total_mxn;
+        public string total_words_es;
+        public string gesture;
+    }
+
+    /// <summary>The server's authored cast (<c>GET /v1/npcs</c>).</summary>
+    [Serializable]
+    public class Cast
+    {
+        public string scenario_id;
+        public string title;
+        public string[] gestures;
+        public CastNpc[] npcs;
+    }
+
+    [Serializable]
+    public class CastNpc
+    {
+        public string npc_id;
+        public string[] aliases;
+        public string name;
+        public string role;
+        public string greeting;        // opening line, same wording as greeting_audio
+        public string greeting_audio;  // server path of the pre-recorded WAV, or null
+        public string[] actions;
+        public bool ready;             // false = no agent configured for this character
     }
 
 #pragma warning disable 0649 // DTO fields are filled by JsonUtility
@@ -51,6 +100,7 @@ public class ConversationClient : MonoBehaviour
         public int sample_rate;
         public string user_transcript;
         public string agent_transcript;
+        public SceneAction[] actions;
     }
 
     [Serializable]
@@ -80,6 +130,7 @@ public class ConversationClient : MonoBehaviour
             return;
         }
         Instance = this;
+        RunId = Guid.NewGuid().ToString("N");
         if (!IsOnline)
             Debug.Log("ConversationClient: no serverUrl set; NPCs will answer with canned lines.");
     }
@@ -97,6 +148,9 @@ public class ConversationClient : MonoBehaviour
         string url = $"{Base}/v1/speech?session_id={turn.sessionId}&npc_id={UnityWebRequest.EscapeURL(turn.npcId)}&response_format=json";
         if (!string.IsNullOrEmpty(scenarioId))
             url += "&scenario_id=" + UnityWebRequest.EscapeURL(scenarioId);
+        url += "&run_id=" + RunId;
+        if (!string.IsNullOrEmpty(learnerName))
+            url += "&learner_name=" + UnityWebRequest.EscapeURL(learnerName);
 
         using var req = new UnityWebRequest(url, "POST")
         {
@@ -120,7 +174,12 @@ public class ConversationClient : MonoBehaviour
             yield break;
         }
 
-        var reply = new Reply { heard = parsed.user_transcript ?? "", text = parsed.agent_transcript ?? "" };
+        var reply = new Reply
+        {
+            heard = parsed.user_transcript ?? "",
+            text = parsed.agent_transcript ?? "",
+            actions = parsed.actions ?? Array.Empty<SceneAction>(),
+        };
         if (!string.IsNullOrEmpty(parsed.audio_base64))
         {
             byte[] bytes = null;
@@ -140,6 +199,52 @@ public class ConversationClient : MonoBehaviour
         using var req = UnityWebRequest.Delete($"{Base}/v1/speech/sessions/{sessionId}");
         req.timeout = 10;
         yield return req.SendWebRequest();
+    }
+
+    /// <summary>Fetch the authored cast; exactly one of the callbacks is called. Offline: onError.</summary>
+    public IEnumerator LoadCast(Action<Cast> onDone, Action<string> onError)
+    {
+        if (!IsOnline)
+        {
+            onError?.Invoke("offline");
+            yield break;
+        }
+        using var req = UnityWebRequest.Get($"{Base}/v1/npcs");
+        req.timeout = 10;
+        yield return req.SendWebRequest();
+        if (req.result != UnityWebRequest.Result.Success)
+        {
+            onError?.Invoke(Describe(req));
+            yield break;
+        }
+        Cast cast = null;
+        try { cast = JsonUtility.FromJson<Cast>(req.downloadHandler.text); } catch { }
+        if (cast?.npcs == null)
+            onError?.Invoke("server sent malformed cast");
+        else
+            onDone?.Invoke(cast);
+    }
+
+    /// <summary>Download a server audio file (e.g. a pre-recorded greeting) as a clip; null on failure.</summary>
+    public IEnumerator DownloadClip(string serverPath, Action<AudioClip> onDone)
+    {
+        if (!IsOnline || string.IsNullOrEmpty(serverPath))
+        {
+            onDone?.Invoke(null);
+            yield break;
+        }
+        string url = serverPath.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? serverPath : Base + serverPath;
+        using var req = UnityWebRequest.Get(url);
+        req.timeout = 15;
+        yield return req.SendWebRequest();
+        if (req.result != UnityWebRequest.Result.Success)
+        {
+            Debug.LogWarning($"ConversationClient: could not fetch {url}: {Describe(req)}");
+            onDone?.Invoke(null);
+            yield break;
+        }
+        string mediaType = (req.GetResponseHeader("Content-Type") ?? "audio/wav").Split(';')[0].Trim();
+        yield return Decode(req.downloadHandler.data, mediaType, 0, onDone);
     }
 
     /// <summary>Turn the server's audio into a clip: WAV and raw PCM in-process, other containers via Unity's decoder.</summary>

@@ -32,13 +32,23 @@ public class NpcSchedule : MonoBehaviour
         walker.Arrived += OnArrived;
         var talk = GetComponent<NpcConversation>();
         if (talk != null)
+        {
             talk.Greeted += OnGreeted;
+            talk.Acted += OnActed;
+        }
     }
 
     void OnGreeted()
     {
         foreach (var move in moves)
             if (move.trigger == NpcMove.TriggerGreet)
+                Fire(move);
+    }
+
+    void OnActed(ConversationClient.SceneAction action)
+    {
+        foreach (var move in moves)
+            if (move.trigger == NpcMove.TriggerAction && move.after == action.action)
                 Fire(move);
     }
 
