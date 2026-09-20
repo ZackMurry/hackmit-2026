@@ -29,9 +29,9 @@ public class EpisodeSummary : MonoBehaviour
     public Key endKey = Key.Q;
     [Tooltip("Restarts the scene from the receipt.")]
     public Key restartKey = Key.R;
-    [Tooltip("Back to the Scenar.io departures desk for another trip.")]
+    [Tooltip("Back to the Scenar.io front (the sentence and the globe) for another trip.")]
     public Key newTripKey = Key.N;
-    public string departuresScene = "Assets/Scenes/Departures.unity";
+    public string frontScene = "Assets/Scenes/Wish.unity";
 
     [Header("Receipt")]
     [Tooltip("Printed header lines. The first is the café's name.")]
@@ -130,7 +130,7 @@ public class EpisodeSummary : MonoBehaviour
         else if (keyboard[restartKey].wasPressedThisFrame)
             Restart(SceneManager.GetActiveScene().path);
         else if (keyboard[newTripKey].wasPressedThisFrame)
-            Restart(departuresScene);
+            Restart(frontScene);
     }
 
     bool AllDone()

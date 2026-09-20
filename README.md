@@ -4,29 +4,35 @@ Generated world models + immersive language learning
 
 ## Layout
 
-- `My project/` — Unity 6 project. Scenes: `Assets/Scenes/Departures.unity` (the Scenar.io
-  front door), `Assets/Scenes/CancunCafe.unity` (Café Nader; NPCs from `npcs_cancun.json`) and
+- `My project/` — Unity 6 project. Scenes: `Assets/Scenes/Wish.unity` (the Scenar.io front:
+  the sentence and the globe), `Assets/Scenes/CancunCafe.unity` (Café Nader; NPCs from `npcs_cancun.json`) and
   `Assets/Scenes/SampleScene.unity` (ModernHouse).
 - `Assets/Worlds/` — WorldLabs Gaussian-splat worlds (`.spz`) and their collider meshes.
 - `orchestrator/` — the Python API: scenario generation, speech turns, run recording and grading.
 - `scenarios/cafe_cancun/` — the authored café: cast, prompts, menu, goals and greeting audio.
 - `tools/spz_to_collider.py` — builds a walkable collider `.glb` from a `.spz` when WorldLabs didn't ship one.
 
-## The flow — `Departures`
+## The front — `Wish`
 
-Play starts at the departures desk (`Assets/Scenes/Departures.unity`, one `Departures`
-component on the camera's sibling). Under the Scenar.io wordmark is a boarding pass with two
-questions and nothing else: one typed line — *where would you like to be, and what for?* (the
-empty line shows the example, "a café in Cancún, ordering breakfast") — and one tap for how much
-of the language you have (*just starting … nearly fluent*, mapped to CEFR A1–B2). Enter, or the
-red BOARD button on the stub, boards. The stub then flips through the trip's stages like a
-split-flap board — SCOUTING, BUILDING (World Labs Marble generating the place from your line),
-CASTING (ElevenLabs voices), WRITING (the three goals), BOARDING — while the gate and seat fill
-in, the pass is stamped `BUEN VIAJE`, and the screen fades into `destinationScene`. Today every
-line lands in CancunCafe: it is the worked example of a generated trip, and the receipt at the
-end sends you back with **N**. The line and level are kept in PlayerPrefs (`Departures.LastLine`,
-`LastLevel`) for when generation is wired to `POST /v1/scenarios`. Same paper, ink and stamp red
-as the receipt; stage timing, example line, levels and destination are fields on the component.
+Play starts in `Assets/Scenes/Wish.unity`: the Scenar.io wordmark, one sentence with two blanks,
+and a wireframe globe.
+
+    Put me in ______________________.
+    I speak it [a little].
+
+Finishing the sentence is the whole configuration. The first blank is one typed line (empty, it
+shows the example, "a café in Cancún, ordering breakfast"); the second is one word — *barely · a
+little · comfortably · well*, CEFR A1–B2 — changed by clicking it or with ↑/↓. Name a place the
+globe knows (Cancún, CDMX, Madrid, Buenos Aires, Paris… see `Wish.Places`) and a pin drops and the
+globe turns to face you. Enter: the sentence fades, the globe rushes up to the pin and dissolves,
+and in its place a room drafts itself in line by line — floor, walls, window, counter, table, two
+chairs — while a few words say what is happening (scouting the place, World Labs Marble building
+the world, ElevenLabs casting the locals, writing your three goals, go). Then the screen fades
+into `destinationScene`. Today every sentence lands in CancunCafe, the worked example of a
+generated trip; the receipt at the end sends you back with **N**. The line and level are kept in
+PlayerPrefs (`Wish.LastLine`, `LastLevel`) for when generation is wired to `POST /v1/scenarios`.
+The globe and room are `LineRenderer`s built at start (no assets); type is IMGUI; colours,
+example, levels, timing and destination are fields on the `Wish` component.
 
 ## Talking to NPCs
 
@@ -135,7 +141,7 @@ the NPC sessions and drops Café Nader's receipt on the table: each quest is a l
 "price" is its A+…F grade for how the learner handled it in Spanish, with a line of feedback
 under it; the total is the overall grade, stamped `PAGADO` (or `PENDIENTE` for D/F). Header,
 table and waitress name are fields on the component. **R** reloads the café for another
-round; **N** goes back to the departures desk. The header prints at once and the lines
+round; **N** goes back to the front to make another wish. The header prints at once and the lines
 follow when `POST /v1/grade` answers a few seconds later, having re-read everything said under
 this run's `run_id`. A quest the grader says never came up prints `—`; one the player never
 reached says *no llegaste hasta aquí*. **R** resets the quests and restarts the scene.
