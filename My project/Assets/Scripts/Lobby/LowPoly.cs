@@ -224,7 +224,8 @@ public static class LowPoly
 
     /// <summary>
     /// A cloud: a few squashed icospheres pushed together, flat along the bottom, faces
-    /// shaded by which way they look. About 2.5 wide, 1.2 tall, centred near the origin.
+    /// shaded by which way they look. About 2.5 wide, 1 tall, centred near the origin.
+    /// Every puff is cut off by the base, so none of them reads as a whole ball.
     /// </summary>
     public static Mesh Cloud(int seed)
     {
@@ -232,13 +233,14 @@ public static class LowPoly
         float R(float lo, float hi) => lo + (float)rng.NextDouble() * (hi - lo);
         var b = new Builder();
         var ico = Icosphere(1);
-        int puffs = 3 + rng.Next(4);
-        const float floor = -0.08f;
+        int puffs = 4 + rng.Next(4);
+        const float floor = 0f;
         for (int i = 0; i < puffs; i++)
         {
-            var centre = new Vector3(R(-0.9f, 0.9f), R(0f, 0.3f), R(-0.4f, 0.4f));
-            float radius = R(0.42f, 0.85f) * (i == 0 ? 1.15f : 1f);
-            var squash = new Vector3(1f, R(0.6f, 0.8f), R(0.75f, 1f));
+            float radius = R(0.45f, 0.85f) * (i == 0 ? 1.15f : 1f);
+            var squash = new Vector3(R(1f, 1.3f), R(0.5f, 0.7f), R(0.75f, 1f));
+            // Sit each puff low enough that the base slices off its lower half or so.
+            var centre = new Vector3(R(-1.0f, 1.0f), radius * squash.y * R(0.05f, 0.45f), R(-0.4f, 0.4f));
             foreach (var (p, q, r) in ico)
             {
                 Vector3 A = Puff(p), B = Puff(q), C = Puff(r);
