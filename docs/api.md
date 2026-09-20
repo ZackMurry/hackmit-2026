@@ -123,7 +123,8 @@ Use the returned Content-Type to decode the audio. Reuse a client-generated
 `session_id` UUID for conversation continuity. Supply `scenario_id` to load a
 saved scenario and validate the NPC. Add `response_format=json` to receive
 `audio_base64`, `media_type`, `sample_rate`, `user_transcript`, `agent_transcript`,
-`actions`, `session_id`, and `npc_id`. Transcripts may be null.
+`actions`, `goals_achieved` (goal ids the director had ticked *before* this turn; see
+Goal tracking), `session_id`, and `npc_id`. Transcripts may be null.
 
 Two optional query parameters make the café scenario work properly:
 
@@ -221,8 +222,9 @@ provider HTTP/WebSocket responses; they do not represent live voice validation.
 
 ## Goal tracking and grading
 
-The characters never know they are being graded. The server records what was said,
-and a separate pass judges it afterwards against the scenario's goals.
+The characters never know they are being graded. The server records what was said; a
+director ticks goals off a turn behind the conversation, and a grader judges the whole
+run afterwards against the scenario's goals.
 
 ### What the server records
 
@@ -248,6 +250,32 @@ goal can be checked against `serve_order` having fired rather than inferred from
 wording alone. Recording is best effort and never fails a speech turn. Files are JSON
 Lines under `runs/transcripts` (`RUN_DIR`), capped at 1 MiB and 400 turns read back.
 404 for an unrecorded run, 422 for a `run_id` outside `[A-Za-z0-9_-]{1,64}`.
+
+### Ticking goals during the run
+
+```sh
+curl http://127.0.0.1:8765/v1/runs/visit-1/goals
+```
+
+```json
+{"run_id": "visit-1", "reviewing": false, "goals": [
+  {"id": "order", "label": "Order something in Spanish", "core": true, "npc_id": "maria",
+   "achieved": true, "evidence_quote": "Quiero un café de olla y una concha, por favor."},
+  {"id": "ask_price", "label": "Ask what something costs, before being told", "core": true,
+   "npc_id": "maria", "achieved": false, "evidence_quote": null}]}
+```
+
+Every `/v1/speech` turn that heard the learner schedules one review of the run *after*
+the reply has been sent, so the character never waits on the judge. The review covers
+every goal still open, not just the latest line, which is why a slow or failed review
+costs nothing: the next turn looks again. `reviewing` is true while the latest turn is
+still being judged — poll a second or two after a reply and again while it stays true.
+A goal is ticked only with the learner's exact words as `evidence_quote`, and once
+ticked stays ticked; the grader below decides how well it was done. Goal ids are the
+client's quest ids. Pass `scenario_id` to track a generated scenario's goals instead of
+the pack's. State is one small JSON file per run under `runs/transcripts/goals/`
+(`GOAL_DIR`). 503 when no director is configured (`OPENAI_API_KEY` plus
+`DIRECTOR_MODEL`, falling back to `TUTOR_MODEL`; `director_ready` on `/health`).
 
 ### Grading a finished run
 
@@ -305,8 +333,7 @@ Grading uses the OpenAI Responses API with Pydantic structured output, configure
 `OPENAI_API_KEY` and `TUTOR_MODEL` (falling back to `SCENARIO_MODEL`); 503 when
 neither is set, and `grader_ready` on `/health` says which. A 502 with `grader_ready`
 true is usually a mistyped model name: the server log names the exception class. It
-is the build doc's end-of-run tutor. The per-turn director that ticks goals live
-during a run is still not implemented.
+is the build doc's end-of-run tutor; the director above is its per-turn counterpart.
 
 ## Errors and checks
 
@@ -316,7 +343,7 @@ Errors use `{"detail": ...}`. Statuses: 404 unknown scenario or unrecorded run; 
 Provider exception details are not returned to clients.
 
 ```sh
-uv run pytest                        # 85 tests, no credentials needed
+uv run pytest                        # 90 tests, no credentials needed
 uv run python tools/e2e_check.py     # live end-to-end, needs a running server
 ```
 

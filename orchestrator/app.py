@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from .director import Director, DirectorProvider, GoalStore, create_director_provider
 from .grading import (GraderProvider, OpenAIGrader, TranscriptStore, create_grader,
                       event_text, overall_grade, passed, rubric_goals)
 from .models import (GeneratedScenario, Grade, GradeRequest, GradeResponse,
@@ -55,11 +56,13 @@ async def provider_call(awaitable, timeout: float):
 def create_app(*, speech: SpeechProvider | None = None,
                scenarios: ScenarioProvider | None = None,
                grader: GraderProvider | None = None,
+               director: DirectorProvider | None = None,
                data_dir: Path | None = None, runs_dir: Path | None = None,
                timeout: float = 60,
                pack: "ScenePack | None" = None) -> FastAPI:
     store = ScenarioStore(data_dir or Path(os.getenv("SCENARIO_DIR", "runs/scenarios")))
     transcripts = TranscriptStore(runs_dir or Path(os.getenv("RUN_DIR", "runs/transcripts")))
+    goals = GoalStore(Path(os.getenv("GOAL_DIR", str(transcripts.directory / "goals"))))
     if pack is None:
         # An authored scenario is optional: without one the API still relays speech,
         # it just cannot price an order or describe its cast.
@@ -73,6 +76,8 @@ def create_app(*, speech: SpeechProvider | None = None,
             configured = OpenAIScenarios(os.environ["OPENAI_API_KEY"], os.environ["SCENARIO_MODEL"])
         app.state.scenarios = configured
         app.state.grader = grader if grader is not None else create_grader()
+        judge = director if director is not None else create_director_provider()
+        app.state.director = Director(judge, goals, transcripts, timeout) if judge else None
         app.state.speech = speech
         if speech is None and os.getenv("SPEECH_ADAPTER"):
             app.state.speech = load_speech_provider(os.environ["SPEECH_ADAPTER"])
@@ -88,6 +93,8 @@ def create_app(*, speech: SpeechProvider | None = None,
                 await configured.aclose()
             if isinstance(app.state.grader, OpenAIGrader):
                 await app.state.grader.aclose()
+            if app.state.director is not None:
+                await app.state.director.aclose()
             if app.state.speech is not None and hasattr(app.state.speech, "aclose"):
                 await app.state.speech.aclose()
 
@@ -98,6 +105,7 @@ def create_app(*, speech: SpeechProvider | None = None,
         return {"status": "ok", "scenarios_ready": app.state.scenarios is not None,
                 "speech_ready": app.state.speech is not None,
                 "grader_ready": app.state.grader is not None,
+                "director_ready": app.state.director is not None,
                 "scenario_pack": pack.scenario.scenario_id if pack else None}
 
     @app.get("/v1/npcs")
@@ -207,6 +215,31 @@ def create_app(*, speech: SpeechProvider | None = None,
             raise HTTPException(404, "No recorded transcript for this run") from None
         return {"run_id": run_id, "turn_count": len(turns),
                 "transcript": [turn.model_dump() for turn in turns]}
+
+    async def rubric_for(scenario_id: UUID | None):
+        """The goals a run is played against: a saved scenario's, else the pack's."""
+        if scenario_id is not None:
+            saved = await get_scenario(scenario_id)
+            return rubric_goals(saved.scenario.goals)
+        return rubric_goals(pack.scenario.goals) if pack is not None else []
+
+    @app.get("/v1/runs/{run_id}/goals")
+    async def run_goals(run_id: str, scenario_id: UUID | None = None):
+        """Which goals the run has met so far, as the director ticks them.
+
+        Poll this a second or two after a speech turn: `reviewing` is true while the
+        latest turn is still being judged. Goals are ticked from what the learner
+        said, not from scene actions; the client may still tick those itself.
+        """
+        if app.state.director is None:
+            raise HTTPException(503, "Configure OPENAI_API_KEY and DIRECTOR_MODEL (or TUTOR_MODEL)")
+        rubric = await rubric_for(scenario_id)
+        if not rubric:
+            raise HTTPException(422, "No goals to track: pass scenario_id or load a scenario pack")
+        try:
+            return await app.state.director.status(run_id, rubric)
+        except ValueError:
+            raise HTTPException(422, "Invalid run_id") from None
 
     @app.post("/v1/grade", response_model=GradeResponse, openapi_extra={
         "requestBody": {"required": True, "content": {"application/json": {
@@ -334,9 +367,18 @@ def create_app(*, speech: SpeechProvider | None = None,
                   if text and text.strip()]
         record += [TranscriptTurn(role="event", npc_id=npc_id, text=event_text(action))
                    for action in actions]
+        run = run_id or str(session_id)
         with suppress(Exception):
-            await asyncio.to_thread(transcripts.append,
-                                    run_id or str(session_id), record)
+            await asyncio.to_thread(transcripts.append, run, record)
+        # The director reads the run back and ticks goals after the reply has gone
+        # out; `goals_achieved` below is therefore the state before this turn.
+        achieved: list[str] = []
+        if app.state.director is not None and any(t.role == "learner" for t in record):
+            with suppress(Exception):
+                rubric = await rubric_for(scenario_id)
+                achieved = [g["id"] for g in (await app.state.director.status(run, rubric))["goals"]
+                            if g["achieved"]]
+                app.state.director.schedule(run, rubric)
         headers = {"X-Session-ID": str(session_id), "Cache-Control": "no-store"}
         if output.sample_rate is not None:
             headers["X-Audio-Sample-Rate"] = str(output.sample_rate)
@@ -346,7 +388,8 @@ def create_app(*, speech: SpeechProvider | None = None,
                 "media_type": output.media_type, "sample_rate": output.sample_rate,
                 "user_transcript": output.user_transcript,
                 "agent_transcript": output.agent_transcript,
-                "actions": actions},
+                "actions": actions,
+                "goals_achieved": achieved},
                 headers=headers)
         # Raw-audio callers still need the scene actions, and a header is the only
         # place left to put them. Skipped entirely if it would be unreasonably large.

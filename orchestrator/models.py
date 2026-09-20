@@ -108,6 +108,19 @@ class GradeRequest(Model):
     run_id: Annotated[str, Field(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
 
 
+class GoalTick(Model):
+    """A goal met during the run, as the director saw it. No quote, no tick."""
+
+    id: GoalId
+    evidence_quote: Text
+
+
+class Verdict(Model):
+    """What the director returns after a turn: the open goals now met, if any."""
+
+    achieved: Annotated[list[GoalTick], Field(max_length=12)]
+
+
 # The scale the client prints. Ordered worst to best; grading.py turns it into points.
 LetterGrade = Literal["F", "D-", "D", "D+", "C-", "C", "C+", "B-", "B", "B+", "A-", "A", "A+"]
 

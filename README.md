@@ -29,6 +29,9 @@ what comes back — speech recognition, the character and the voice are the serv
   opening line as the greeting together with its pre-recorded audio (`/v1/npcs/{id}/greeting`,
   same voice as the live agent, no API spend). Characters without a configured agent are
   flagged in the console.
+- `GoalTracker` (same object) ticks the quest list from what you actually said: after every
+  reply it polls `/v1/runs/{run_id}/goals` until the server's director has judged the turn, and
+  completes any quest whose id was ticked. A second or two behind the character's answer.
 - **Scene actions**: a reply may carry `actions` the character performed mid-conversation
   (`serve_order`, `show_bill`, `play_gesture`; see `docs/api.md`). The client mirrors them in the
   world: quests whose `action` matches tick off, and NPC moves with `"trigger": "action"` start
@@ -53,10 +56,12 @@ A scenario carries goals — "order something in Spanish", "ask a follow-up abou
 said". Two separate things happen with them, and the characters know about neither: an actor who
 is also grading you talks like an examiner, so Maria and Luis are never told.
 
-**During the run** the HUD quest list ticks off scene actions, and that is the client's own
-bookkeeping: a quest whose `action` matches what the server reported completes (`serve_order` →
-the `order` quest), as do `quests.json` edits and `QuestManager.Complete`. The server does not
-judge goals mid-conversation.
+**During the run** the server's director ticks goals from speech. After every `/v1/speech`
+turn — once the character's reply has already gone out, so it costs the learner no waiting —
+it re-reads the run and decides which still-open goals the learner has now met, each with the
+learner's own words as evidence (no quote, no tick). `GET /v1/runs/{run_id}/goals` is the
+checklist, and `GoalTracker` polls it to complete the matching quests. Scene actions still
+tick the client's own way too (`serve_order` → the `order` quest); the two agree.
 
 **After the run** the server grades what was actually said. Every `/v1/speech` turn is appended
 to the run it belongs to — the learner's transcript, the character's reply, and one line per
@@ -78,8 +83,8 @@ a conversation the server never saw. Recordings are JSON Lines under `runs/trans
 Details in `docs/api.md`.
 
 The end card is `EpisodeSummary` in Unity (below): when the visit ends it posts the run id
-and prints what comes back. The build doc's live director, which would tick goals from
-speech during the run rather than from scene actions, is not built.
+and prints what comes back. The director decides *whether* a goal was met, once, and never
+un-ticks; the grader decides *how well*, afterwards, from the whole conversation.
 
 ## Content is JSON
 
@@ -243,8 +248,9 @@ See [API setup and endpoint contracts](docs/api.md). `uv sync`, put `ELEVENLABS_
 `AGENT_ID_MARIA` and `AGENT_ID_LUIS` in `orchestrator/.env` or the repo-root `.env` (both are
 git-ignored; `tools/provision_agents.py --apply` creates the agents and prints the ids), then
 `uv run python -m orchestrator`. It serves the cast (`/v1/npcs`), scenario generation
-(`/v1/scenarios`), speech turns (`/v1/speech`), the recorded run (`/v1/runs/{run_id}`) and
-grading (`/v1/grade`); `/health` reports which of those are configured, and `/docs` is browsable.
-Grading additionally needs `OPENAI_API_KEY` and `TUTOR_MODEL`.
+(`/v1/scenarios`), speech turns (`/v1/speech`), the recorded run (`/v1/runs/{run_id}`), live
+goal ticks (`/v1/runs/{run_id}/goals`) and grading (`/v1/grade`); `/health` reports which of
+those are configured, and `/docs` is browsable. Grading and goal tracking additionally need
+`OPENAI_API_KEY` and `TUTOR_MODEL` (`DIRECTOR_MODEL` to give the per-turn judge a cheaper model).
 Unity remains separately owned. The API includes an ElevenLabs adapter based on
 the teammate's voice demo scripts; see the API docs for keys and agent IDs.

@@ -34,6 +34,8 @@ public class ConversationClient : MonoBehaviour
     public string RunId { get; private set; }
     /// <summary>Turns the server accepted this run; zero means there is nothing to grade.</summary>
     public int TurnsSent { get; private set; }
+    /// <summary>Every reply the server sent this run, whichever NPC it was for.</summary>
+    public event Action<Reply> Received;
 
     /// <summary>One learner turn: a WAV recording for one NPC within one session.</summary>
     public class Turn
@@ -50,6 +52,7 @@ public class ConversationClient : MonoBehaviour
         public string text = "";   // agent_transcript: the caption (may be empty)
         public AudioClip clip;     // decoded NPC audio, or null
         public SceneAction[] actions = Array.Empty<SceneAction>(); // scene actions this turn caused, in order
+        public string[] goalsAchieved = Array.Empty<string>();     // goals the director had ticked before this turn
     }
 
     /// <summary>
@@ -79,6 +82,26 @@ public class ConversationClient : MonoBehaviour
         public CastNpc[] npcs;
     }
 
+    /// <summary>GET /v1/runs/{run_id}/goals: what the director has ticked so far this run.</summary>
+    [Serializable]
+    public class GoalStatus
+    {
+        public string run_id;
+        public bool reviewing;          // the latest turn is still being judged
+        public GoalState[] goals;
+    }
+
+    [Serializable]
+    public class GoalState
+    {
+        public string id;               // same id as the quest it ticks
+        public string label;
+        public bool core;
+        public string npc_id;
+        public bool achieved;
+        public string evidence_quote;   // the learner's words that earned it
+    }
+
     [Serializable]
     public class CastNpc
     {
@@ -104,6 +127,7 @@ public class ConversationClient : MonoBehaviour
         public string user_transcript;
         public string agent_transcript;
         public SceneAction[] actions;
+        public string[] goals_achieved;
     }
 
     [Serializable]
@@ -189,6 +213,7 @@ public class ConversationClient : MonoBehaviour
             heard = parsed.user_transcript ?? "",
             text = parsed.agent_transcript ?? "",
             actions = parsed.actions ?? Array.Empty<SceneAction>(),
+            goalsAchieved = parsed.goals_achieved ?? Array.Empty<string>(),
         };
         if (!string.IsNullOrEmpty(parsed.audio_base64))
         {
@@ -198,7 +223,35 @@ public class ConversationClient : MonoBehaviour
             if (bytes != null)
                 yield return Decode(bytes, parsed.media_type, parsed.sample_rate, c => reply.clip = c);
         }
+        Received?.Invoke(reply);
         onDone?.Invoke(reply);
+    }
+
+    /// <summary>What the director has ticked for this run so far; exactly one callback is called.</summary>
+    public IEnumerator LoadGoals(Action<GoalStatus> onDone, Action<string> onError)
+    {
+        if (!IsOnline)
+        {
+            onError?.Invoke("offline");
+            yield break;
+        }
+        string url = $"{Base}/v1/runs/{RunId}/goals";
+        if (!string.IsNullOrEmpty(scenarioId))
+            url += "?scenario_id=" + UnityWebRequest.EscapeURL(scenarioId);
+        using var req = UnityWebRequest.Get(url);
+        req.timeout = 10;
+        yield return req.SendWebRequest();
+        if (req.result != UnityWebRequest.Result.Success)
+        {
+            onError?.Invoke(Describe(req));
+            yield break;
+        }
+        GoalStatus status = null;
+        try { status = JsonUtility.FromJson<GoalStatus>(req.downloadHandler.text); } catch { }
+        if (status?.goals == null)
+            onError?.Invoke("server sent malformed goal status");
+        else
+            onDone?.Invoke(status);
     }
 
     /// <summary>Close the server-side session (frees the provider connection). Fire and forget.</summary>
