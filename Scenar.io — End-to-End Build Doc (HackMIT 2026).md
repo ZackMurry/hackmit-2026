@@ -4,6 +4,8 @@
 
 2026-09-19 · @Someone
 
+> **Building today? Start at section 18.** It records what is actually built, what this plan lacked, and the exact components still to build. Where it disagrees with sections 5, 10 or 14, section 18 wins.
+
 ## 0. How to read this doc
 
 This is the MAIN spec for Scenar.io. Any other guide in the repo that says "see MAIN spec" means this document. It is written for two readers: a teammate with no background in 3D, Unity or voice AI, and a coding agent (Claude Code or Codex) that needs enough context to write the code without asking.
@@ -884,7 +886,7 @@ Do this twice, once for Maria and once for Luis. Follow the [quickstart](https:/
 | First message | Agent tab | See prompts below | The character speaks first, like a real waitress |
 | LLM | Agent tab | A small, fast OpenAI model from the dropdown to start, such as GPT-5.4 Mini or GPT-5.6 Luna. Lowest reasoning effort. Temperature about 0.7. | Thinking time delays every turn. The [client tools page](https://elevenlabs.io/docs/eleven-agents/customization/tools/client-tools.md) recommends stronger models for reliable tool parameters, so move up one size if tool calls misfire. |
 | Voice | Voice tab | A Mexican Spanish voice, see below |  |
-| TTS model | Voice tab | **V3 Conversational** with expressive mode on | [Expressive mode](https://elevenlabs.io/docs/eleven-agents/customization/voice/expressive-mode.md) gives emotional inflection and supports tags such as `[laughs]` and `[sighs]`. Same price. About 280 ms model latency. |
+| TTS model | Voice tab | **Flash v2.5** by default. V3 Conversational cannot be chosen when a Spanish agent is created; it is set by PATCH afterwards and is 4x slower to first audio. See section 18.3. Originally: V3 Conversational with expressive mode on | [Expressive mode](https://elevenlabs.io/docs/eleven-agents/customization/voice/expressive-mode.md) gives emotional inflection and supports tags such as `[laughs]` and `[sighs]`. Same price. About 280 ms model latency. |
 | TTS fallback | Voice tab | Flash v2.5, about 75 ms | Use if time to first audio is over 1.5 s. Not Flash v2, which is English only. |
 | Stability, speed | Voice tab | Stability 0.40 to 0.50. Speed 1.0 for Luis, 1.05 for Maria. | Lower stability is more emotional. [Voice design guidance](https://elevenlabs.io/docs/eleven-agents/customization/voice/best-practices/conversational-voice-design.md) puts natural speed at 0.9 to 1.1. |
 | Output audio format | Voice or Advanced tab | PCM 16000 Hz | Matches what the Python SDK and our Unity player expect |
@@ -1182,6 +1184,8 @@ Optional and cheap: in each agent's **Analysis** tab, add evaluation criteria th
 
 ## 10. The signal contract
 
+> **Status, 2026-09-19.** Layer A, the client tools, is built as described. Layer B, the WebSocket bridge, was not built: Unity talks to the orchestrator over HTTP (`docs/api.md`), and scene actions return in the speech response. The streaming replacement is specified in section 18.5, C1. Keep this section for its rules, which still hold: the conversation never waits for the renderer, one live character, log everything.
+
 There are two interfaces. Layer A is three client tools between the ElevenLabs agent and the orchestrator. Layer B is the bridge: about twenty message types between the orchestrator and Unity. The orchestrator translates between them, and it is the only code that knows both.
 
 The source of truth for both layers is `orchestrator/protocol.py`, as Pydantic models. This section is the human-readable copy. Change the code and this section together.
@@ -1369,6 +1373,8 @@ Notice that the orchestrator adds `total_mxn` to the `tool.call` params. Unity n
 6. **Log everything.** The orchestrator appends every bridge message and every ElevenLabs event to `runs/<run_id>/events.jsonl`. It is the debugger, the evidence for feedback, and the replay source for the mock tools.
 
 ## 11. Director and tutor
+
+> **Status, 2026-09-19.** Goal ticking and end-of-run grading are built (`orchestrator/director.py`, `orchestrator/grading.py`). Mistake logging, learner state, steering the actor and the written feedback report are not; see section 18.5, C5 and C10.
 
 The character acts, a separate director judges, and a tutor explains afterwards. Keeping those three apart is the main design idea of the project, and it is where the OpenAI API does its work.
 
@@ -1672,6 +1678,8 @@ From the Hacker's Guide in the project: Innovation 30%, Technical Complexity 30%
 
 ## 14. Demo first, then scale up
 
+> **Status, 2026-09-19.** Stages 0, 1, 3 (server side), 4 (ticks and grades) and 5 are done in HTTP form. The remaining work is re-planned in section 18.7; the demo script below still stands, and section 18.8 shows it with the new pieces.
+
 Build in stages where every stage ends with something you could show a judge. After stage 1 there is always a working demo on `main`. This is an order of work with exit tests, not a timetable.
 
 ### Stages
@@ -1857,3 +1865,294 @@ All pages were opened on 19 September 2026. They were read through a tool that s
 
 - [API pricing and models](https://developers.openai.com/api/docs/pricing), [structured outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs), [Codex](https://developers.openai.com/codex), [Codex CLI](https://learn.chatgpt.com/docs/codex/cli)
 - [Talkio: AI speaking practice apps in 2026](https://www.talkio.ai/blog/best-ai-language-speaking-practice-apps-in-2026), for Praktika, Speak and Duolingo Max
+
+## 18. The final build: where we are, what the plan lacked, and what to build
+
+Written 2026-09-19, evening. About two hours of agent-assisted feature work remain today; tomorrow is for small tweaks, rehearsal and the submission. This section overrides sections 5, 10 and 14 wherever they disagree with it, because it describes the system that actually exists. Every vendor claim below was either verified against the live API today or is marked **verify this**.
+
+### 18.1 Where we are
+
+The build took a different shape from section 10. There is no WebSocket bridge. The orchestrator is a **FastAPI HTTP service on `127.0.0.1:8765`**, and Unity is its client. Unity records a push-to-talk clip, posts it, and plays the reply. This works end to end today.
+
+| Piece | State | Where |
+| --- | --- | --- |
+| Cancún café world, walking, seating, NPC walking and look-at | Done | Unity lane |
+| Maria (waitress) and Luis (at the table), Mexican voices, full prompts | Done, provisioned from data | `scenarios/cafe_cancun/`, `tools/provision_agents.py` |
+| Speech turn: learner audio in, character audio out, transcripts | Done | `POST /v1/speech` |
+| Client tools answered by Python: `serve_order`, `show_bill`, `play_gesture`; prices from `menu.json`; repeat-safe | Done | `orchestrator/scene.py` |
+| Scene actions returned to Unity, and consumed by it | Done | `actions` in the speech response |
+| Memory across characters: Luis knows what you ordered from Maria | Done | `run_id` |
+| Cast discovery and pre-recorded greetings | Done on the server; Unity does not play the greeting audio yet | `GET /v1/npcs`, `GET /v1/npcs/{id}/greeting` |
+| Director: goals ticked from speech after every turn, off the reply path | Done | `orchestrator/director.py`, `GET /v1/runs/{run_id}/goals` |
+| Grader: letter grade per goal with evidence, printed as the café receipt | Done | `orchestrator/grading.py`, `POST /v1/grade` |
+| Scenario generation from a prompt | Done | `POST /v1/scenarios` |
+| Tests | 90 unit tests, plus a live 21-check end-to-end script | `uv run pytest`, `tools/e2e_check.py` |
+
+Not built: streaming and low latency, barge-in, lip-sync, ambience, director steering of the actors, mistake logging and the written feedback report, pronunciation feedback, the director eval set, ElevenLabs-side agent tests, `AGENTS.md` and a real Codex log, the standalone build and backup video.
+
+### 18.2 What the plan lacked
+
+Measured against the two challenge briefs and against a learner's actual experience, the original plan had these gaps. Each one maps to a component in 18.5.
+
+**Against the ElevenLabs brief**
+
+| Criterion | What the plan had | What it lacked |
+| --- | --- | --- |
+| Agentic depth | Two agents, tools, cross-agent memory | The director never talks back to the actors. Section 11 describes silent stage directions, but nothing sends them. The agents also know nothing about the world: where the learner is, how long they have waited, what they are looking at. No use of ElevenLabs' own analysis or agent-testing features. |
+| Interaction design: low latency | A latency budget on paper | No streaming anywhere. A turn takes 3 to 5 seconds because the server waits for the whole reply, then waits 1.4 s more to be sure it ended, and on a first turn also throws away a greeting. Nothing is measured or reported. |
+| Interaction design: emotional inflection | "Use V3 Conversational" | That model cannot be selected when creating a Spanish agent, so the plan's only lever for emotion silently did nothing. No plan for expressiveness on the model we can use, and no per-character choice. |
+| Technical integration: voice plus video | uLipSync from audio | The agent's audio frames already carry per-character timing (verified today). The plan never used it, and lip-sync was never built. No use of the Sound Effects API at all. |
+| Novelty | Situated rehearsal | Holds. Made stronger by soundscape and by generated scenarios getting live characters. |
+
+**Against the OpenAI brief**
+
+| Criterion | What the plan had | What it lacked |
+| --- | --- | --- |
+| How the API powers the experience | Director, tutor, scenario generator | The director runs at the model's default **medium** reasoning effort on every turn, with no timeout and a prompt layout that defeats caching. It only answers "was a goal met"; it does not log mistakes, read the learner's state, or steer anyone. There is no written feedback report, no pronunciation feedback, and no use of a second modality. |
+| How Codex helped | A list of jobs | No `AGENTS.md`, one log entry, and no measurable before-and-after story. OpenAI's hosted Evals product is being shut down (read-only 2026-10-31), so the eval must be a local script. |
+
+**Against the learner's experience**
+
+- The café is silent. A beach café with no waves and no murmur does not feel like a place.
+- The character's mouth does not move.
+- The learner cannot interrupt, which is how real conversation works and is a named demo beat.
+- Feedback is a grade. A learner needs to know what to say differently, and to hear it.
+- Nothing adapts. A learner who is drowning gets the same Maria as one who is coasting.
+
+### 18.3 Decisions
+
+| Decision | Choice | Why |
+| --- | --- | --- |
+| Transport between Unity and Python | Keep HTTP. Add a **streaming** speech endpoint alongside the existing one. | Unity already speaks HTTP. A chunked response needs no new Unity package, and the existing endpoint keeps working for anyone who has not switched. |
+| Learner audio into the agent | Keep: transcribe with Scribe, send text. | Measured today: Scribe takes about 0.4 s for a 3 s clip. ElevenLabs has no "user finished" message, so sending raw audio would hand turn-ending to a silence timer, which is slower with push-to-talk. Scribe also returns a confidence value per word, which we use. |
+| Voice model | Flash v2.5 by default. V3 Conversational as a measured A/B, per character. | Measured today on the direct socket: 442 ms to first audio on Flash, 1,792 ms on V3. V3 must be set by PATCH after creation. |
+| Character LLM | `gpt-5.6-luna`, to be benchmarked against two faster candidates. | The default model skipped tool calls. Any replacement must pass the end-to-end tool checks three times running. |
+| Director model | `gpt-5.6-luna`, `reasoning.effort = "none"` | OpenAI's reasoning guide recommends `none` for voice and classification work. $0.20 / $1.20 per million tokens. |
+| Grader, feedback and scenario model | `gpt-5.6-terra`, `reasoning.effort = "medium"` | Runs once per visit, so quality first. $2 / $12 per million tokens. About $0.07 per full visit in total. |
+| Pronunciation | Scribe word confidence live, plus one `gpt-audio-1.5` pass at the end | No vendor documents pronunciation scoring, so it is presented as a coach's impression, never as a score. |
+| Ambience | Generated once with the ElevenLabs Sound Effects API, committed, played by Unity | Verified today on a free account: a seamless loop in 2.4 s. The agents' built-in background sound has no ocean preset, stops between turns, and cannot be placed in 3D. |
+
+### 18.4 Latency: budget and targets
+
+Measured today unless marked as a target.
+
+| Stage | Now | Target | How |
+| --- | --- | --- | --- |
+| Transcription (Scribe batch, 3 s clip) | 0.40 s | 0.35 s | Send `language_code=es`; send raw PCM with `file_format=pcm_s16le_16` when Unity provides it |
+| Signed URL | 0.15 s | 0 on the turn | Done during pre-warm |
+| Open the socket and drain the greeting | 2 to 4 s, on every first turn | 0 on the turn | Pre-warm when the player walks up (C2) |
+| Agent: first audio after our text | 0.45 s direct | 0.45 to 0.8 s | Already fast; do not regress it |
+| Waiting for the whole reply | 1 to 3 s | 0 | Stream chunks as they arrive (C1) |
+| Deciding the reply has ended | 1.4 s fixed | about 0 | End on the frame's `is_final` flag, verified present today |
+| **Learner stops talking to first sound** | **3 to 5 s** | **1.2 s p50, 1.8 s p90** | |
+| Director verdict | Unmeasured; runs at medium reasoning | under 1 s p50 | C5 |
+
+The numbers are reported by the server on every turn (C3), so the demo can show them rather than claim them.
+
+### 18.5 Components to build
+
+Priority P0 is the two-hour build. P1 follows if time allows. P2 is stretch. Every component lists the files it owns so parallel agents do not collide, and an acceptance test.
+
+#### C1. Streaming speech endpoint (P0)
+
+`POST /v1/speech/stream` takes exactly the same request as `POST /v1/speech`. It answers with `Content-Type: application/x-ndjson`, one JSON object per line, flushed as each becomes available:
+
+```json
+{"type":"transcript","text":"Quiero un café de olla","low_confidence_words":["olla"],"stt_ms":402}
+{"type":"audio","seq":0,"sample_rate":16000,"offset_ms":0,"pcm_base64":"...","visemes":[{"t":46,"d":24,"v":"PBM"}]}
+{"type":"text","text":"Claro, joven. ¿Para tomar aquí o para llevar?"}
+{"type":"action","action":{"action":"play_gesture","npc_id":"maria","gesture":"nod"}}
+{"type":"done","timings_ms":{"stt":402,"first_audio":910,"complete":2300},"goals_achieved":["G1"],"interrupted":false}
+```
+
+- The adapter gains `respond_stream()`, an async generator. `respond()` is rebuilt on top of it so there is one code path.
+- A reply ends on `audio_event.is_final`. A 0.6 s quiet period stays only as a fallback.
+- If the client disconnects mid-stream, the server stops forwarding and keeps the session.
+- Errors before the first line use the normal status codes. Errors after it arrive as `{"type":"error","detail":...}` and the stream closes.
+- The old endpoint gets the same `is_final` ending, which removes 1.4 s for clients that have not switched.
+- Files: `orchestrator/elevenlabs_adapter.py`, `orchestrator/speech.py`, the speech routes in `orchestrator/app.py`, `orchestrator/tests/test_stream.py`.
+- Accept when: a mocked socket that emits three audio frames produces three `audio` lines in order before `done`; live, `first_audio` is under 1.5 s on a warm session.
+
+#### C2. Session pre-warm (P0)
+
+`POST /v1/speech/sessions/{session_id}/warm?npc_id=&run_id=&learner_name=` opens the agent socket and drains the greeting, then returns 204. Unity calls it when the player comes into range, while it plays the pre-recorded greeting from `GET /v1/npcs/{id}/greeting`. The first real turn then costs the same as any other. Warming an already warm session is a no-op. Idle sessions still close after 120 s.
+
+- Files: adapter, speech routes, tests.
+- Accept when: the first turn after a warm has `first_audio` within 0.3 s of a second turn.
+
+#### C3. Latency instrumentation (P0)
+
+- Every speech response carries `timings_ms`: `stt`, `session_open` (0 when warm), `first_audio`, `complete`, `total`. The non-streaming endpoint also sends a `Server-Timing` header.
+- `GET /v1/metrics` returns count, p50 and p90 per stage, per character, since start.
+- Every turn appends one line to `runs/<run_id>/events.jsonl`.
+- `tools/latency_bench.py --npc maria --turns 5 [--stream]` prints a table. It is the tool that settles every A/B in this plan.
+- Files: adapter, `orchestrator/metrics.py`, routes, `tools/latency_bench.py`.
+
+#### C4. Agent configuration pass (P0)
+
+In `tools/provision_agents.py` and `scenario.json`:
+
+- Add `agent_response_complete` and `agent_chat_response_part` to `client_events`.
+- Add a spoken filler for slow model turns: `turn.soft_timeout_config = {"timeout_seconds": 1.5, "message": "Mmm, a ver..."}`.
+- Set the character LLM's reasoning or thinking budget to its lowest value if the agent config exposes one. **Verify this** in the API schema.
+- Lower Flash `stability` to 0.35 for livelier delivery, and check by ear.
+- Add `--tts flash|v3`. V3 is created as Flash, then PATCHed to `eleven_v3_conversational` with `expressive_mode` and four `suggested_audio_tags` (laughs, warmly, slow, sighs). Prompts get a tone section only in the V3 variant, because **on Flash a tag such as `[laughs]` is read aloud**. The adapter strips any `[tag]` from transcripts either way.
+- Benchmark three character LLMs with C3: `gpt-5.6-luna`, `gemini-2.5-flash-lite`, and one ElevenLabs-hosted Qwen model. Keep the fastest that passes `tools/e2e_check.py` three times running.
+- Decision rule for voice: a character moves to V3 only if its p50 first audio stays under 1.5 s **and** it sounds clearly better. The likely outcome is Maria on Flash, because her lines are short and transactional, and Luis on V3, because his are social. Per-character choice is itself worth showing.
+
+#### C5. Director: fast, richer, and steering (P0)
+
+All in `orchestrator/director.py` and `orchestrator/models.py`.
+
+- Speed: `reasoning={"effort":"none"}`, `httpx.Timeout(4.0, connect=1.5)`, one throwaway call per schema at startup because the first call with a new schema is slow, `max_output_tokens=600`. `service_tier="fast"` behind `DIRECTOR_FAST=1`.
+- Caching: the full rubric and the instructions go first and never change during a run; turns follow as append-only messages; the list of still-open goal ids goes last. Drop the sliding 40-turn window, since a visit is 15 to 25 turns. Log `usage.input_tokens_details.cached_tokens`.
+- A richer verdict, with `achieved` first so it is generated first:
+
+```python
+class Verdict(BaseModel):
+    achieved: list[GoalTick]
+    mistakes: list[Mistake]          # quote, correction, category, explanation_en, severity 1-3, asr_suspect
+    used_english: bool
+    used_repair_phrase: bool
+    learner_state: Literal["fine", "hesitant", "stuck", "distressed"]
+    director_note: str | None        # one stage direction for the character, or null
+```
+
+- Every `evidence_quote` and every mistake `quote` must be a verbatim substring of a learner line, checked in code. Anything else is dropped.
+- A mistake is marked `asr_suspect` when its words overlap the turn's low-confidence words from Scribe.
+- **Steering.** When `director_note` is set, the adapter sends `{"type":"contextual_update","text":"[DIRECTOR] ..."}` on that character's live socket. At most one note every three turns. The triggers are the table in section 11: stuck twice, distressed, the follow-up goal still open after five exchanges with Luis, doing very well, 40 s before the time cap. This is adaptive difficulty with no visible machinery, and it is the clearest agentic-depth story we have: one vendor's model judges, and quietly directs another vendor's actor, live.
+- Mistakes, states and notes are appended to the run, so the feedback report can use them.
+- `GET /v1/runs/{run_id}/goals` also returns `learner_state` and the latest note, for the demo's debug overlay.
+- Free `omni-moderation-latest` check on learner text, in parallel, never on the reply path.
+- Accept when: all existing director tests pass; new tests cover the substring rule, note rate-limiting, and a note reaching a mocked socket; the eval in C11 shows zero false awards.
+
+#### C6. Soundscape from the Sound Effects API (P0)
+
+- `tools/make_ambience.py` calls `POST /v1/sound-generation` with `model_id: eleven_text_to_sound_v2` and `loop: true`, and writes into `scenarios/cafe_cancun/ambience/`:
+
+| File | Prompt, in short | Length | Credits |
+| --- | --- | --- | --- |
+| `ocean_loop.mp3` | Gentle waves on a sandy beach heard from inside an open café, distant, calm, no birds, seamless loop | 30 s | 1,200 |
+| `cafe_murmur_loop.mp3` | Quiet café interior, soft indistinct Spanish murmur, occasional cup and spoon, ceiling fan, seamless loop | 30 s | 1,200 |
+| `cup_on_table.mp3` | A ceramic cup and saucer set down on a wooden table | 1.5 s | 60 |
+| `receipt.mp3` | A small thermal receipt printer printing and tearing | 2 s | 80 |
+
+- Generate once, listen, commit. Never generate at runtime. Use a spare account's credits.
+- `scenario.json` gains an `ambience` list (`id`, `file`, `loop`, `volume`, `duck_db`) and the two one-shots are attached to `serve_order` and `show_bill`.
+- Served by `GET /v1/ambience/{name}` and listed in `GET /v1/npcs`. Each action carries an optional `sfx` URL.
+- Mixing guidance for Unity: ocean at 0.12 and murmur at 0.08, mostly non-spatial, ducked by 6 dB while a character or the learner speaks, with a low-pass on the ocean so it sits behind speech. It must never be louder than a whisper under the voices.
+- The scenario generator gains an `ambience_prompt` field, so a generated scenario can have its own soundscape (used by C14).
+- Accept when: files exist and loop without a click; endpoint tests pass.
+
+#### C7. Lip-sync and push-to-interrupt from alignment data (P1)
+
+- The agent's audio frames carry `alignment: {chars, char_start_times_ms, char_durations_ms}`. Verified present today.
+- `orchestrator/visemes.py` maps Spanish graphemes to a small viseme set: `A E I O U`, `PBM`, `FV`, `L`, `S` (s, z, c before e or i), `TD` (t, d, n), `KG` (c, qu, k, g, j), `R`, `CH`, `sil`. Digraphs and silent `h` are handled; timings are offset by the chunk's position.
+- Streaming `audio` lines carry `visemes`. The non-streaming JSON carries one full `visemes` timeline.
+- Unity drives the Rocketbox viseme blendshapes from the timeline. If that slips, the volume-driven jaw from section 8 is the fallback.
+- **Push-to-interrupt.** The learner presses the talk key while a character is speaking. Unity stops playback and sends `interrupted_at_ms` with the next turn. The server uses the alignment timeline to work out which words were actually heard, records the truncated line in the transcript, and tells the agent with a contextual update: "The learner interrupted you after: '...'". The character then reacts to being cut off. This gives the demo its barge-in beat without full-duplex audio.
+- Files: `orchestrator/visemes.py`, adapter, tests.
+- Accept when: `"¡Buenas tardes!"` with known timings yields the expected viseme sequence; an interruption at 600 ms yields the right heard prefix.
+
+#### C8. World-state feed (P1)
+
+`POST /v1/speech/sessions/{session_id}/context` with `{"text": "..."}` forwards a contextual update to the live agent. Unity sends short facts: "The customer sat down at the table", "The customer has been reading the menu for 20 seconds", "The customer stood up to leave". Rate-limited to one every 5 s, 200 characters. The prompts already tell each character to treat bracketed notes as silent direction; add one line saying `[WORLD]` notes are facts about the room.
+
+#### C9. Pronunciation and confidence (P1)
+
+- Scribe's per-word `logprob` is already in the response we receive. Words below a threshold, tuned on real clips, become `low_confidence_words`.
+- Each learner clip is saved to `runs/<run_id>/audio/turn_NN.wav`.
+- At the end of a run, the two or three clips with the lowest confidence go to `gpt-audio-1.5` through Chat Completions with a forced function call, since that model does not list structured outputs. The result is shown as "coach's impressions", limited to words the transcript confirms were said.
+
+#### C10. The written feedback report (P1)
+
+`POST /v1/feedback` takes a `run_id` and returns, from one `gpt-5.6-terra` call over the transcript, the director's mistakes and the grades: at most three fixes ranked by severity, each with what we heard, a better version and one line of why; two or three phrases that would have helped at the moments the learner stalled; one thing that went well, quoted; counters; a suggested next visit; the pronunciation impressions; and the visit's latency figures. Never shows an `asr_suspect` mistake. Also renders `runs/<run_id>/feedback.html`.
+
+A second opinion from ElevenLabs itself: the provisioner sets `platform_settings.evaluation.criteria` mirroring the goals and `data_collection` for items ordered and an estimated CEFR level. The adapter records each `conversation_id`; the report fetches `analysis` from `GET /v1/convai/conversations/{id}` and shows both verdicts side by side. Where they disagree, that is shown, not hidden.
+
+#### C11. Tests that prove it (P0 for the eval, P1 for the rest)
+
+| Test | What it proves | Cost |
+| --- | --- | --- |
+| `uv run pytest` | Logic, with mocked providers | Free |
+| `eval/director_cases.jsonl` and `eval/run_eval.py` | 40 hand-labelled cases, half adversarial: said in English, one-word answers, the character says the phrase instead of the learner, a bare "¿y tú?". Per-goal precision and recall, p50 and p95 latency, and a hard gate: **any false award fails**. Run across `{luna, 5.4-nano} x {none, low}`. | Under $0.25 |
+| `tools/agent_tests.py` | ElevenLabs' own agent-testing API: tool-call tests created with `POST /v1/convai/agent-testing/create` and run three times each with `run-tests`. Ordering leads to `serve_order`; asking the price leads to `show_bill`; pay de limón does **not** lead to `serve_order`; English gets a Spanish reply. Text only, so it costs no voice minutes. **Verify this** on the free plan. | LLM pass-through only |
+| `tools/e2e_check.py`, extended | The streaming endpoint, pre-warm, timings under target, a director note arriving, ambience served, interruption handled | About 1 agent minute |
+| `tools/latency_bench.py` | The latency table for the demo slide | About 1 agent minute |
+| `tools/switch_account.py <name>` | Automates the account runbook: add voices, provision, write `.env`, run the end-to-end check | None |
+
+#### C12. Codex, done honestly (P0, run by a person in parallel with the agents)
+
+1. `/init`, then commit `AGENTS.md`: run `uv run pytest` after edits; never loosen "no quote, no tick"; never touch `My project/`.
+2. Job 1: Codex writes the 40-case eval and the runner; a person corrects the labels; baseline the current director.
+3. Job 2: Codex applies the C5 speed changes with the eval as the guard. Record p50, p95, cached tokens and false awards before and after, in one table. **This table is the "one concrete way Codex improved our outcome" story.**
+4. Job 3: `/review` on the branch before merge; record what it found and what was accepted.
+5. Keep prompts, `codex exec --json` logs and diffs. Append each job to `docs/codex-log.md` with real numbers.
+
+#### C13. One conversation, two characters (P2)
+
+ElevenLabs' `transfer_to_agent` system tool can hand a live conversation from Maria to Luis on the same socket, and the voice changes. It needs both agents in one account, and it fights Unity's one-session-per-character design. Stretch only.
+
+#### C14. Live characters for any generated scenario (P2)
+
+`POST /v1/scenarios/{id}/provision` creates ElevenLabs agents for a generated scenario, picking a voice by gender from the account, and generates its soundscape from `ambience_prompt`. This turns "type any situation" into a café, a pharmacy or a bus station with speaking characters. The provisioner already does the hard part.
+
+### 18.6 What Unity needs to do
+
+None of this is in the Python lane, and none of it blocks the Python lane. In priority order:
+
+1. On proximity: call the pre-warm endpoint and play the greeting WAV from `GET /v1/npcs/{id}/greeting`.
+2. Switch to `POST /v1/speech/stream`: read lines with a `DownloadHandlerScript`, push PCM into the streamed ring buffer that section 8 already specifies, and handle `action` lines as today.
+3. Two looped AudioSources for the ambience, ducked while anyone speaks, plus the one-shot sounds that arrive with actions.
+4. Drive viseme blendshapes from the `visemes` timeline.
+5. Push-to-interrupt: talk key during playback stops it and sends `interrupted_at_ms`.
+6. Send `[WORLD]` facts to the context endpoint: sat down, stood up, waited, looked at the menu.
+7. A feedback screen after the receipt, from `POST /v1/feedback`.
+
+If streaming cannot land in Unity in time, steps 1 and 3 alone still cut the first turn by seconds, and the old endpoint still gets the `is_final` saving.
+
+### 18.7 How the two hours are split
+
+Three agents in parallel, plus a person driving Codex. File ownership is exclusive, so merges are clean. New routes live in their own `APIRouter` modules, so only lane A edits `app.py`.
+
+| Lane | Components | Owns |
+| --- | --- | --- |
+| A. Voice path | C1, C2, C3, then C7, C8 | `elevenlabs_adapter.py`, `speech.py`, `app.py`, `metrics.py`, `visemes.py`, `tools/latency_bench.py` |
+| B. Brain | C5, then C9, C10 | `director.py`, `grading.py`, `models.py`, `feedback.py` |
+| C. Characters and sound | C4, C6, then `agent_tests.py`, `switch_account.py`, e2e extensions | `tools/`, `scenarios/`, `scene.py` |
+| Codex | C12 jobs 1 to 3 | `eval/`, `AGENTS.md`, `docs/codex-log.md` |
+
+Order of cuts if time runs out: C14, C13, C10's ElevenLabs second opinion, C9's audio pass, C8, C7's interrupt, C7's visemes. Never cut: C1, C2, C3, C5, C6, and the eval.
+
+Every lane ends by running `uv run pytest`, then `tools/e2e_check.py` against live agents, twice, because several bugs so far only appeared on a second run.
+
+### 18.8 The visit, after this build
+
+| Moment | What the learner experiences | ElevenLabs | OpenAI | Time |
+| --- | --- | --- | --- | --- |
+| Walk in | Waves outside, a low murmur, a fan. Maria looks up. | Soundscape from the Sound Effects API | | |
+| Approach Maria | She greets you at once, in her own voice, mouth moving | Pre-recorded greeting; session pre-warmed | | 0 s wait |
+| "Quiero un café de olla y una concha" | She answers fast: "¿Para tomar aquí o para llevar?" | Scribe, then the agent on Flash, reply streamed chunk by chunk with visemes | Director reads the turn in the background | about 1.2 s to first sound |
+| "Para tomar aquí" | "Ahorita te lo traigo." A cup lands on the table with a clink. | `serve_order` tool call, priced by Python; one-shot sound | Goal "order" ticks with your own words quoted | tick under 1 s later |
+| You hesitate twice | Maria, unprompted, offers two options in one short sentence | A silent `[DIRECTOR]` note delivered as a contextual update | Director reports `stuck` and writes the note | |
+| You cut her off mid-sentence | She stops, and reacts to being interrupted | Alignment data tells us which words you actually heard | The transcript keeps only what was heard | |
+| "¿Cuánto es?" | "Son ochenta pesos, joven." A receipt prints. | `show_bill`; total in Spanish words from Python | Goal "ask the price" ticks | |
+| Sit with Luis | "Ya vi que pediste café de olla, buena elección." He sounds warmer, laughs. | Second agent, `user_order` handed over; V3 expressive voice if it passes the A/B | | |
+| He mentions night turtle patrols; you ask why at night | He lights up and tells you | | Goal "follow-up" ticks, quoting both his line and yours | |
+| You sit quietly for 20 s | He fills the silence naturally | `[WORLD]` fact from Unity as a contextual update | | |
+| Leave | The receipt shows a grade per goal. Then a page: three things to say differently, phrases that would have helped, which words to practise, and how fast the café answered you. | ElevenLabs' own post-call analysis as a second opinion | Grader and feedback on `gpt-5.6-terra`; pronunciation impressions from `gpt-audio-1.5` | |
+
+### 18.9 What to say to each set of judges
+
+**ElevenLabs.** Two agents with their own goals and withheld information; tools that change the world and are answered in microseconds by our server so speech never waits; memory passed between agents; a director from another vendor that steers them mid-conversation with contextual updates; the world itself feeding them facts. Latency is measured and shown per turn. Lip-sync comes from the agent's own alignment data, which is the voice-plus-video story with no extra API. The soundscape is ElevenLabs too. Agents are provisioned from data and regression-tested with ElevenLabs' own testing API.
+
+**OpenAI.** Four distinct uses: a per-turn structured-output judge tuned for latency with a zero-false-award eval; adaptive steering; a grader and a written tutor report; audio understanding for pronunciation impressions; plus scenario generation. The Codex story is the eval it wrote and the before-and-after table it produced.
+
+### 18.10 Still to verify
+
+- Whether the agent config exposes a reasoning-effort or thinking-budget field for the character LLM.
+- Whether ElevenLabs' agent-testing endpoints run on the free plan, and what they bill.
+- V3 Conversational quality in Mexican Spanish, by ear, and whether audio tags behave.
+- Whether `service_tier="fast"` measurably helps `gpt-5.6-luna`.
+- The Scribe confidence threshold that best separates a mispronounced word from noise.
+- ElevenLabs minutes: four free accounts give about 55 minutes. Rehearsal and the expo need more in one place; buy Starter on one account the day before.
