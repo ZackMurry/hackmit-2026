@@ -110,7 +110,8 @@ public class Wish : MonoBehaviour
     float pinLat, pinLon;
 
     Material skyMaterial, litMaterial, cloudMaterial;
-    readonly List<Mesh> meshes = new();
+    readonly List<Mesh> meshes = new();        // everything built here, for cleanup
+    readonly List<Mesh> cloudMeshes = new();   // the few cloud shapes the puffs pick from
     Light sun;
 
     // The clouds: a sea of them below the globe; on Enter they all stream past. Nothing
@@ -290,7 +291,7 @@ public class Wish : MonoBehaviour
     void BuildClouds()
     {
         for (int i = 0; i < 5; i++)
-            meshes.Add(LowPoly.Cloud(100 + i));
+            cloudMeshes.Add(LowPoly.Cloud(100 + i));
         for (int i = 0; i < 34; i++)
             Spawn(true);
     }
@@ -305,7 +306,7 @@ public class Wish : MonoBehaviour
         go.transform.rotation = Quaternion.Euler(0f, R(-40f, 40f), 0f);
         var puff = new Puff { t = go.transform, drift = R(0.10f, 0.22f), size = R(0.9f, 1.7f) };
         go.transform.localScale = Vector3.one * puff.size;
-        var mr = Piece(go, meshes[cloudRng.Next(meshes.Count)], cloudMaterial);
+        var mr = Piece(go, cloudMeshes[cloudRng.Next(cloudMeshes.Count)], cloudMaterial);
         mr.shadowCastingMode = ShadowCastingMode.Off;
         Reset(puff, anywhere);
         puffs.Add(puff);
