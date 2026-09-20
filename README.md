@@ -219,9 +219,14 @@ waits just inside; when the player walks up she greets them ("Tu amigo ya está 
 conmigo"), then walks up the aisle to the table (`"trigger": "greet"`). Luis is already seated
 at `table_a` (`"seat"`); the free chair opposite is `table_b` — press **F** to sit. Maria leaves
 you to settle in (`"trigger": "move"` after `to_table`) and comes back from the counter 20 s later
-to take the order. Look at her and hold **E**; when the server reports `serve_order` the `order`
-quest ticks and she heads back to the counter (`"trigger": "action"`). Then hold **E** facing
-Luis to chat — he knows what you ordered. The characters, prompts, menu and greeting audio live in
+to take the order, standing across the table from your chair so you see her without turning. Look
+at her and hold **E**; when the server reports `serve_order` the `order` quest ticks and she heads
+back to the counter (`"trigger": "action"`). Then hold **E** facing Luis to chat — he knows what
+you ordered, and each character overhears what you say to the other while they are both at the
+table (a `contextual_update` on the listener's session). Only one character talks at a time: a
+line that arrives while the other is mid-sentence waits (`NpcConversation.maxWaitForFloor`), and
+the one not talking turns to watch the one who is (`NpcLookAt.watchOthers`). The characters,
+prompts, menu and greeting audio live in
 `scenarios/cafe_cancun/` (see `docs/api.md`). Avatars: `Avatars/Female_Adult_08` and
 `Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
 

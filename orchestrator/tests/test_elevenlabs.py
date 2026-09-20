@@ -208,3 +208,23 @@ def test_overlap_rejected():
                 await active
             await provider.aclose()
     asyncio.run(run())
+
+
+def test_the_other_character_at_the_table_overhears_a_turn():
+    async def run():
+        provider, sockets, _ = make_provider()
+        try:
+            luis, maria = turn(run_id="visit-9"), turn(npc="maria", run_id="visit-9")
+            await provider.respond(luis)
+            await provider.respond(maria)
+            heard = [m for m in sockets[0].sent if m["type"] == "contextual_update"]
+            assert len(heard) == 1
+            assert "Quiero un café" in heard[0]["text"] and "Un café, claro." in heard[0]["text"]
+            # Maria's socket opened after Luis spoke, so she heard nothing of his turn.
+            assert not [m for m in sockets[1].sent if m["type"] == "contextual_update"]
+            # A character on another visit hears nothing.
+            await provider.respond(turn(run_id="visit-10"))
+            assert len([m for m in sockets[0].sent if m["type"] == "contextual_update"]) == 1
+        finally:
+            await provider.aclose()
+    asyncio.run(run())

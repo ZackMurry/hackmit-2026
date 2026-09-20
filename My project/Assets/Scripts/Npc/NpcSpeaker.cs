@@ -36,11 +36,35 @@ public class NpcSpeaker : MonoBehaviour
     /// <summary>Fired when a clip passed to Speak finishes.</summary>
     public event Action FinishedSpeaking;
 
+    static readonly List<NpcSpeaker> everyone = new();
+
+    /// <summary>Whoever is talking right now, or null. Only one NPC has the floor at a time.</summary>
+    public static NpcSpeaker Talking
+    {
+        get
+        {
+            foreach (var s in everyone)
+                if (s.IsSpeaking)
+                    return s;
+            return null;
+        }
+    }
+
+    /// <summary>Someone other than <paramref name="me"/> is mid-line.</summary>
+    public static bool SomeoneElseSpeaking(NpcSpeaker me)
+    {
+        var talking = Talking;
+        return talking != null && talking != me;
+    }
+
     AudioSource source;
     readonly List<(SkinnedMeshRenderer smr, int index)> mouthTargets = new();
     readonly float[] samples = new float[256];
     float mouthWeight;
     bool wasSpeaking;
+
+    void OnEnable() => everyone.Add(this);
+    void OnDisable() => everyone.Remove(this);
 
     void Awake()
     {

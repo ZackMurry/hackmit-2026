@@ -179,6 +179,11 @@ Unusually long gaps between audio chunks can still truncate a reply; a live chec
 with the configured agent is required. Scene tool calls are priced and answered by the
 server, and reported to the client as `actions`; see Scene actions above.
 
+Characters on the same `run_id` overhear each other: after a turn, every other open
+session on that run whose character differs gets a `contextual_update` with what the
+learner said and how the character answered, marked as not addressed to them. A session
+opened later does not get earlier turns; it starts from the run state (`{{user_order}}`).
+
 Connections retain conversation memory per session UUID and are closed when the
 NPC/scenario changes, on error/cancellation, after 120 seconds idle, or on shutdown.
 Overlapping turns for one session are rejected with 422. Up to 64 sessions are

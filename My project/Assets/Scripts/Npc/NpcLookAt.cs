@@ -3,8 +3,9 @@ using UnityEngine;
 /// <summary>
 /// Makes the NPC feel alive: while the player is engaging them (in talk range
 /// facing them, or mid-conversation) a standing body turns to face the player
-/// and the head tracks the player's eyes within a cone; otherwise the NPC minds
-/// its own business and the idle clip owns the pose. The spine always breathes.
+/// and the head tracks the player's eyes within a cone; while another NPC nearby
+/// is talking, they watch that NPC instead; otherwise the NPC minds its own
+/// business and the idle clip owns the pose. The spine always breathes.
 /// Bone rotations are applied in LateUpdate, i.e. layered on top of whatever
 /// <see cref="NpcIdleAnimation"/> posed this frame.
 /// </summary>
@@ -29,6 +30,8 @@ public class NpcLookAt : MonoBehaviour
     public float headSpeed = 6f;
     [Tooltip("Beyond this distance the head never tracks, even mid-engagement.")]
     public float lookRange = 8f;
+    [Tooltip("Watch another NPC while they are talking (when the player is not engaging this one).")]
+    public bool watchOthers = true;
 
     [Header("Idle")]
     [Tooltip("Extra breathing sway on the spine, degrees. Set to 0 when the idle clips already breathe enough.")]
@@ -50,6 +53,10 @@ public class NpcLookAt : MonoBehaviour
     Quaternion headCurrent;
     float lookWeight;
     float attentionUntil = float.NegativeInfinity;
+    // What we are looking at this frame: the player, or a talking NPC's head.
+    Transform focus;
+    NpcSpeaker watched;
+    Transform watchedHead;
 
     /// <summary>True while the player has this NPC's attention (or for attentionHold after).</summary>
     public bool Attentive => Time.time < attentionUntil;
@@ -98,23 +105,49 @@ public class NpcLookAt : MonoBehaviour
             spineRest = spine.localRotation;
     }
 
-    void Update()
+    /// <summary>The player when they are engaging us, else whoever else is talking nearby, else null.</summary>
+    Transform PickFocus()
     {
         if (Engaged)
-            attentionUntil = Time.time + attentionHold;
+            return player;
+        if (!watchOthers)
+            return null;
+        var talking = NpcSpeaker.Talking;
+        if (talking == null || talking == speaker)
+            return null;
+        if (talking != watched)
+        {
+            watched = talking;
+            var theirs = talking.GetComponent<NpcAvatarLoader>();
+            watchedHead = theirs != null ? theirs.FindBone(headBone) : null;
+        }
+        var target = watchedHead != null ? watchedHead : talking.transform;
+        return (target.position - transform.position).magnitude <= lookRange ? target : null;
+    }
 
-        // Only an engaged, standing, non-walking NPC turns its body: the walker owns
+    void Update()
+    {
+        var wanted = PickFocus();
+        if (wanted != null)
+        {
+            focus = wanted;
+            attentionUntil = Time.time + attentionHold;
+        }
+        if (focus == null)
+            focus = player;
+
+        // Only an attentive, standing, non-walking NPC turns its body: the walker owns
         // the heading while walking, and a seated body stays put in its chair.
-        if (player == null || !Attentive
+        if (focus == null || !Attentive
             || (walker != null && walker.OwnsHeading) || (sitter != null && sitter.IsSeated))
             return;
 
-        Vector3 toPlayer = player.position - transform.position;
-        toPlayer.y = 0f;
-        if (toPlayer.sqrMagnitude < 0.01f || toPlayer.magnitude > turnRange)
+        Vector3 toFocus = focus.position - transform.position;
+        toFocus.y = 0f;
+        if (toFocus.sqrMagnitude < 0.01f || toFocus.magnitude > turnRange)
             return;
 
-        var target = Quaternion.LookRotation(toPlayer);
+        var target = Quaternion.LookRotation(toFocus);
         transform.rotation = Quaternion.Slerp(transform.rotation, target, turnSpeed * Time.deltaTime);
     }
 
@@ -131,11 +164,12 @@ public class NpcLookAt : MonoBehaviour
             spine.localRotation = basePose * Quaternion.Euler(breath, 0f, 0f);
         }
 
-        if (head == null || player == null)
+        if (head == null || focus == null)
             return;
 
-        // Direction to the player's eyes, clamped to a cone around the body's forward.
-        Vector3 dir = player.position - head.position;
+        // Direction to the focus (the player's eyes, or the talker's head), clamped to
+        // a cone around the body's forward.
+        Vector3 dir = focus.position - head.position;
         Vector3 local = transform.InverseTransformDirection(dir.normalized);
         float yaw = Mathf.Clamp(Mathf.Atan2(local.x, local.z) * Mathf.Rad2Deg, -headMaxYaw, headMaxYaw);
         float pitch = Mathf.Clamp(-Mathf.Asin(Mathf.Clamp(local.y, -1f, 1f)) * Mathf.Rad2Deg, -headMaxPitch, headMaxPitch);
@@ -143,7 +177,7 @@ public class NpcLookAt : MonoBehaviour
         var look = transform.rotation * Quaternion.Euler(pitch, yaw, 0f);
         var target = look * headRestOffset;
 
-        // Track only while the player has our attention (and is near enough); otherwise
+        // Track only while something has our attention (and is near enough); otherwise
         // fade out and let the idle clip move the head.
         float wantWeight = Attentive && dir.magnitude <= lookRange ? 1f : 0f;
         lookWeight = Mathf.MoveTowards(lookWeight, wantWeight, Time.deltaTime * 2f);

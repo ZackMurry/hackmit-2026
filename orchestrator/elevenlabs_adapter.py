@@ -305,6 +305,7 @@ class ElevenLabsSpeech:
                 session.actions.clear()  # only this turn's actions reach the client
                 await session.ws.send(json.dumps({"type": "user_message", "text": text}))
                 audio, response = await self._turn(session)
+                await self._overhear(session, text, response)
                 return SpeechOutput(wav_bytes(audio, session.rate), "audio/wav", session.rate,
                                     text, response, tuple(session.actions))
             except BaseException:
@@ -314,6 +315,29 @@ class ElevenLabsSpeech:
                 raise
             finally:
                 session.touched = time.monotonic()
+
+    async def _overhear(self, speaker: Session, heard: str, said: str):
+        """Tell the other characters at this table what was just said.
+
+        Each character has its own conversation, so without this Luis has no idea
+        Maria took the order a moment ago. A contextual_update is context, not a
+        turn: the listener does not answer it, it just knows. Only characters whose
+        conversation is already open hear anything; a character met later starts
+        from the run state instead.
+        """
+        if not said:
+            return
+        name = self.pack.npcs[speaker.npc_id].name if self.pack and speaker.npc_id in self.pack.npcs \
+            else speaker.npc_id
+        text = (f"Overheard just now at the same table (not addressed to you, do not reply to "
+                f"it, but you know it happened): the learner said to {name}: \u00ab{heard}\u00bb. "
+                f"{name} answered: \u00ab{said}\u00bb.")
+        for other in list(self.sessions.values()):
+            if other is speaker or other.run is not speaker.run or other.ws is None \
+                    or other.npc_id == speaker.npc_id or other.lock.locked():
+                continue
+            with suppress(Exception):  # a listener that misses a line is not the turn's problem
+                await other.ws.send(json.dumps({"type": "contextual_update", "text": text[:2000]}))
 
     async def end_session(self, session_id: UUID):
         session = self.sessions.get(session_id)

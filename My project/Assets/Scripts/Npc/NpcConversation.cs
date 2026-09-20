@@ -31,6 +31,10 @@ public class NpcConversation : MonoBehaviour
     [Tooltip("Recordings whose loudest sample is below this are treated as silence.")]
     public float silenceThreshold = 0.01f;
 
+    [Header("Manners")]
+    [Tooltip("Longest this NPC waits for another to finish talking before speaking anyway.")]
+    public float maxWaitForFloor = 20f;
+
     [Header("HUD")]
     public int fontSize = 18;
     public float subtitleSeconds = 10f;
@@ -197,6 +201,17 @@ public class NpcConversation : MonoBehaviour
     {
         if (string.IsNullOrEmpty(text) && clip == null)
             yield break;
+
+        // Nobody talks over anybody: wait for whoever has the floor to finish. Luis
+        // holds his greeting while Maria is still welcoming you, and a reply that
+        // lands mid-sentence waits its turn.
+        float waitStart = Time.time;
+        while (NpcSpeaker.SomeoneElseSpeaking(speaker) && Time.time - waitStart < maxWaitForFloor)
+        {
+            var other = NpcSpeaker.Talking.GetComponent<NpcInteractable>();
+            Status = other != null ? $"Waiting for {other.displayName} to finish…" : "Waiting…";
+            yield return null;
+        }
 
         Status = "Speaking…";
         if (clip != null)
