@@ -69,16 +69,17 @@ curl http://127.0.0.1:8765/v1/grade \
   -H 'Content-Type: application/json' -d '{"run_id":"<run_id>"}'
 ```
 
-`POST /v1/grade` returns `overall` — **1–10 for how completely the whole goal set was hit**,
-weighting the goals marked `core` above the rest — plus a per-goal verdict quoting the learner's
-own words as evidence, and a short summary addressed to them. A goal is never awarded without a
-quote. Add `scenario_id` to grade against a generated scenario's goals instead of the café's, or
-post `goals` and `transcript` inline to grade a conversation the server never saw. Recordings are
-JSON Lines under `runs/transcripts/`. Details in `docs/api.md`.
+`POST /v1/grade` returns the receipt the game prints: a letter grade **A+ … F** per goal
+with one sentence of feedback quoting the learner's own words, `null` for a goal whose
+moment never came, and an `overall` letter that weights the goals marked `core` double.
+A pass is never given without a quote. Add `scenario_id` to grade against a generated
+scenario's goals instead of the café's, or post `goals` and `transcript` inline to grade
+a conversation the server never saw. Recordings are JSON Lines under `runs/transcripts/`.
+Details in `docs/api.md`.
 
-Unity does not call `/v1/grade` yet — there is no end card, so a finished run is graded with
-curl. The build doc's live director, which would tick goals from speech during the run rather
-than from scene actions, is also not built.
+The end card is `EpisodeSummary` in Unity (below): when the visit ends it posts the run id
+and prints what comes back. The build doc's live director, which would tick goals from
+speech during the run rather than from scene actions, is not built.
 
 ## Content is JSON
 
@@ -100,15 +101,20 @@ Flip `status` to `"done"` (from code via `QuestManager.Instance.Complete(id)`, o
 file) and the HUD ticks it off. `action` names the server scene action that completes the quest
 automatically. Quest completion is also a trigger for NPC moves.
 
-### `scores.json` — the bill
+### The bill — `EpisodeSummary`
 
 The episode ends when every quest is done (the server's scene actions tick them) or when the
 player presses **Q**. `EpisodeSummary` (on the `Quests` object) then releases the cursor, closes
-the NPC sessions and prints Café Nader's receipt: each quest is a line item whose "price" is its
-A+…F grade for language performance, with a line of feedback under it; the total is the overall
-grade, stamped `PAGADO` (or `PENDIENTE` for D/F). Header, table and waitress name are fields on
-the component. The scoring API doesn't exist yet, so grades are read from `scores.json`, which is
-the shape it should return:
+the NPC sessions and drops Café Nader's receipt on the table: each quest is a line item whose
+"price" is its A+…F grade for how the learner handled it in Spanish, with a line of feedback
+under it; the total is the overall grade, stamped `PAGADO` (or `PENDIENTE` for D/F). Header,
+table and waitress name are fields on the component. The header prints at once and the lines
+follow when `POST /v1/grade` answers a few seconds later, having re-read everything said under
+this run's `run_id`. A quest the grader says never came up prints `—`; one the player never
+reached says *no llegaste hasta aquí*. **R** resets the quests and restarts the scene.
+
+Without a server the grades come from `scores.json` in StreamingAssets, which is the same shape
+the API returns (only the quests the player completed are shown):
 
 ```json
 {
@@ -120,8 +126,8 @@ the shape it should return:
 }
 ```
 
-`id` is the quest id; an empty `overall` is averaged from the quest grades (4.3 scale); quests
-without an entry show `—`. **R** on the receipt resets the quests and restarts the scene.
+`id` is the quest id (the café's goals use the same ids); an empty `overall` is averaged from
+the quest grades (F = 0, D- = 0.7, … A+ = 4.0).
 
 ### `npcs.json`
 

@@ -5,13 +5,17 @@ afterwards, off the critical path, the way the build doc's tutor does: one call 
 larger model with the whole transcript, the rubric, and the hard events the game
 recorded, returning a structured verdict.
 
-Two rules shape it:
+The verdict is the shape the game prints on its receipt: one letter grade per goal
+with a line of feedback, an overall grade, and a short summary. Three rules shape it:
 
-1. **No quote, no goal.** A goal is only awarded with the learner's own words as
-   evidence. A model that awards one without them is rejected, not trusted.
+1. **No quote, no pass.** A grade of C- or better is only given with the learner's own
+   words as evidence. A model that passes a goal without them is rejected, not trusted.
 2. **Events are not opinions.** Tool calls the character actually triggered are
    recorded alongside speech, so "they ordered something" can be checked against
    `serve_order` having fired rather than inferred from the wording.
+3. **Not attempted is not failed.** A goal whose moment never came (the learner never
+   sat down with Luis) gets no grade rather than an F, and the overall grade is
+   computed here from the letters, not asked of the model.
 """
 
 import json
@@ -22,7 +26,7 @@ from typing import Any, Protocol
 
 from openai import AsyncOpenAI
 
-from .models import Grade, RubricGoal, TranscriptTurn
+from .models import GoalResult, Grade, LetterGrade, RubricGoal, TranscriptTurn
 
 MAX_TURNS_PER_RUN = 400
 MAX_RUN_BYTES = 1024 * 1024
@@ -35,22 +39,67 @@ Lines marked learner are the student, npc lines are the characters, and event li
 are things that actually happened in the game, not speech. Use event lines to confirm
 or deny a goal; never quote them as the learner's words.
 
-Award a goal only when the learner's own words satisfy evidence_required exactly, and
-put those exact words in evidence_quote. If you cannot quote the learner, the goal is
-not achieved and evidence_quote is null. Do not award a goal for understanding alone,
-for a one-word answer, or for anything said in English when the goal asks for the
-target language. note is one sentence saying why it was or was not awarded.
+Return one score per goal, with the goal's id, judged only on what the learner
+themselves said in the target language:
 
-overall is 1 to 10 for how completely the whole goal set was hit, weighting goals
-marked core above the rest:
-10 every goal achieved and done well; 9 every goal achieved; 8 every core goal plus
-most others; 7 every core goal; 6 most core goals; 5 about half the goals; 4 fewer
-than half; 3 one or two goals; 2 one goal, barely; 1 no goal achieved.
+grade is a letter from A+ to F for how well the learner did what evidence_required
+describes. A: did it fully and naturally. B: did it, with slips (an article, a verb
+ending, a hesitation). C: got it across clumsily or only partly. D: attempted it but
+did not manage it. F: the moment came and the learner failed it outright, or handled
+it in English. grade is null only when the goal never came up: they never spoke to
+that character, or the situation never arose. Never fail someone for a moment that
+did not happen.
+
+Any grade of C- or better needs evidence_quote: the learner's exact words that earned
+it. If you cannot quote the learner, the grade is D+ or lower and evidence_quote is
+null. Never pass a goal for understanding alone, for a one-word answer, or for
+anything said in English when the goal asks for the target language.
+
+comment is one sentence for the learner, in English, quoting their words where useful:
+what earned the grade, or what would have.
 
 summary is two or three sentences for the learner, in English: what they managed,
 then the single most useful thing to work on. Address them directly, name a specific
 moment, and never mention grading systems, models, prompts or rubrics.
 """
+
+# Same scale as the receipt: F is 0, D- is 0.7, then 0.3 a step up to A+ at 4.0.
+LADDER: tuple[LetterGrade, ...] = ("F", "D-", "D", "D+", "C-", "C", "C+",
+                                   "B-", "B", "B+", "A-", "A", "A+")
+PASSING: LetterGrade = "C-"
+
+
+def points(grade: LetterGrade) -> float:
+    i = LADDER.index(grade)
+    return 0.0 if i == 0 else 0.7 + (i - 1) * 0.3
+
+
+def letter(value: float) -> LetterGrade:
+    if value <= 0.35:
+        return "F"
+    return LADDER[min(max(round((value - 0.7) / 0.3) + 1, 1), len(LADDER) - 1)]
+
+
+def passed(score: GoalResult) -> bool:
+    return score.grade is not None and points(score.grade) >= points(PASSING)
+
+
+def overall_grade(rubric: list[RubricGoal], scores: list[GoalResult]) -> LetterGrade:
+    """Weighted mean of the letters: core goals count double.
+
+    A core goal the learner never got to is an F: the visit is not complete without
+    it. An optional goal that never came up is simply left out, so nobody loses marks
+    because Maria did not happen to ask her quick question.
+    """
+    core = {goal.id: goal.core for goal in rubric}
+    total = weight = 0.0
+    for score in scores:
+        if score.grade is None and not core.get(score.id, False):
+            continue
+        w = 2.0 if core.get(score.id, False) else 1.0
+        total += w * (points(score.grade) if score.grade else 0.0)
+        weight += w
+    return letter(total / weight) if weight else "F"
 
 
 def rubric_goals(goals) -> list[RubricGoal]:

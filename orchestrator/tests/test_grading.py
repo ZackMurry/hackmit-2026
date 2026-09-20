@@ -4,16 +4,17 @@ import pytest
 from fastapi.testclient import TestClient
 
 from orchestrator.app import create_app
-from orchestrator.grading import TranscriptStore, event_text, rubric_goals
-from orchestrator.models import Goal, Grade, GoalResult, TranscriptTurn
+from orchestrator.grading import (TranscriptStore, event_text, letter, overall_grade, points,
+                                  rubric_goals)
+from orchestrator.models import Goal, Grade, GoalResult, RubricGoal, TranscriptTurn
 from orchestrator.scene import GoalSpec
 from orchestrator.speech import SpeechOutput
 from orchestrator.tests.test_api import Scenarios
 
 
-RUBRIC = [{"id": "G1", "npc_id": "maria", "core": True, "label": "Order something",
+RUBRIC = [{"id": "order", "npc_id": "maria", "core": True, "label": "Order something",
            "evidence_required": "The learner names a menu item in a request form."},
-          {"id": "G2", "npc_id": "maria", "core": False, "label": "Ask the price",
+          {"id": "ask_price", "npc_id": "maria", "core": False, "label": "Ask the price",
            "evidence_required": "The learner asks what it costs."}]
 TRANSCRIPT = [{"role": "learner", "npc_id": "maria", "text": "Quisiera un café, por favor."},
               {"role": "npc", "npc_id": "maria", "text": "Claro que sí."},
@@ -21,20 +22,21 @@ TRANSCRIPT = [{"role": "learner", "npc_id": "maria", "text": "Quisiera un café,
 
 
 class Grader:
-    """A grader double: awards every core goal, and records what it was asked."""
+    """A grader double: gives every core goal the same grade, fails the rest, and
+    records what it was asked."""
 
-    def __init__(self, overall=8):
+    def __init__(self, mark="A"):
         self.calls = []
-        self.overall = overall
+        self.mark = mark
 
     async def grade(self, rubric, transcript):
         self.calls.append((rubric, transcript))
-        return Grade(overall=self.overall, summary="Good ordering; ask prices next time.",
-                     goals=[GoalResult(goal_id=goal.id, achieved=goal.core,
-                                       evidence_quote="Quisiera un café, por favor."
-                                       if goal.core else None,
-                                       note="Judged from the transcript.")
-                            for goal in rubric])
+        return Grade(summary="Good ordering; ask prices next time.",
+                     scores=[GoalResult(id=goal.id, grade=self.mark if goal.core else "F",
+                                        evidence_quote="Quisiera un café, por favor."
+                                        if goal.core else None,
+                                        comment="Judged from the transcript.")
+                             for goal in rubric])
 
 
 class Broken:
@@ -64,10 +66,12 @@ def test_grades_an_inline_transcript(tmp_path):
         result = client.post("/v1/grade", json={"goals": RUBRIC, "transcript": TRANSCRIPT})
         assert result.status_code == 200
         body = result.json()
-        assert body["overall"] == 8
-        assert body["goals_achieved"] == 1 and body["goals_total"] == 2
-        assert [g["goal_id"] for g in body["goals"]] == ["G1", "G2"]
-        assert body["goals"][1]["evidence_quote"] is None
+        # A on the core goal (weight 2), F on the other (weight 1): 7.4 / 3 = 2.47 = B-.
+        assert body["overall"] == "B-"
+        assert body["goals_passed"] == 1 and body["goals_total"] == 2
+        assert [s["id"] for s in body["scores"]] == ["order", "ask_price"]
+        assert [s["grade"] for s in body["scores"]] == ["A", "F"]
+        assert body["scores"][1]["evidence_quote"] is None
         # The grader sees the event line, so it can check a claim against what happened.
         rubric, transcript = grader.calls[0]
         assert [t.role for t in transcript] == ["learner", "npc", "event"]
@@ -76,7 +80,7 @@ def test_grades_an_inline_transcript(tmp_path):
 
 def test_grades_a_recorded_run_against_a_saved_scenario(tmp_path):
     """The two halves together: speech records the run, grade reads it back."""
-    grader = Grader(overall=10)
+    grader = Grader(mark="A+")
     speech = Speech(actions=[{"action": "serve_order", "npc_id": "luis",
                               "items": ["cafe_olla"], "total_mxn": 45}])
     with TestClient(app(tmp_path, scenarios=Scenarios(), speech=speech, grader=grader)) as client:
@@ -94,7 +98,7 @@ def test_grades_a_recorded_run_against_a_saved_scenario(tmp_path):
                                                 "run_id": "visit-1"})
         assert result.status_code == 200
         body = result.json()
-        assert body["overall"] == 10 and body["run_id"] == "visit-1"
+        assert body["overall"] == "A+" and body["run_id"] == "visit-1"
         assert body["scenario_id"] == saved["scenario_id"]
         # The rubric came from the saved scenario, normalised from its goal shape.
         rubric, transcript = grader.calls[0]
@@ -110,7 +114,7 @@ def test_grade_falls_back_to_the_loaded_pack(tmp_path):
         if result.status_code == 422:
             pytest.skip("No scenario pack is loaded in this environment")
         assert result.status_code == 200
-        assert [goal.id for goal in grader.calls[0][0]][:1] == ["G1"]
+        assert [goal.id for goal in grader.calls[0][0]][:1] == ["order"]
 
 
 @pytest.mark.parametrize("payload", [
@@ -142,19 +146,19 @@ def test_grade_unconfigured(monkeypatch, tmp_path):
                                               "transcript": TRANSCRIPT}).status_code == 503
 
 
-def award_without_evidence(rubric):
-    return Grade(overall=9, summary="Nice work.",
-                 goals=[GoalResult(goal_id=goal.id, achieved=True, evidence_quote=None,
-                                   note="Trust me.") for goal in rubric])
+def pass_without_evidence(rubric):
+    return Grade(summary="Nice work.",
+                 scores=[GoalResult(id=goal.id, grade="C-", evidence_quote=None,
+                                    comment="Trust me.") for goal in rubric])
 
 
 def judge_the_wrong_goals(rubric):
-    return Grade(overall=9, summary="Nice work.",
-                 goals=[GoalResult(goal_id="G9", achieved=False, evidence_quote=None,
-                                   note="Not a goal that was asked about.")])
+    return Grade(summary="Nice work.",
+                 scores=[GoalResult(id="G9", grade="F", evidence_quote=None,
+                                    comment="Not a goal that was asked about.")])
 
 
-@pytest.mark.parametrize("make", [award_without_evidence, judge_the_wrong_goals])
+@pytest.mark.parametrize("make", [pass_without_evidence, judge_the_wrong_goals])
 def test_untrustworthy_grade_is_rejected(make, tmp_path):
     with TestClient(app(tmp_path, grader=Broken(make))) as client:
         assert client.post("/v1/grade", json={"goals": RUBRIC,
@@ -172,7 +176,7 @@ def test_unknown_run(run_id, status, tmp_path):
 def test_rubric_normalises_both_goal_shapes():
     generated = Goal(id="order", description="Order a drink", evidence_required="Asks for one",
                      npc_id="luis", core=True)
-    authored = GoalSpec(id="G1", npc_id="any", core=False, label="Recover in Spanish",
+    authored = GoalSpec(id="repair", npc_id="any", core=False, label="Recover in Spanish",
                         evidence_required="Uses a repair phrase")
     assert [g.label for g in rubric_goals([generated, authored])] == \
         ["Order a drink", "Recover in Spanish"]
@@ -192,3 +196,30 @@ def test_transcript_store_survives_a_truncated_line(tmp_path):
     assert [t.text for t in store.get("visit-1")] == ["Hola"]
     with pytest.raises(ValueError):
         store.get("../secrets")
+
+
+def test_letter_scale_matches_the_receipt():
+    assert points("F") == 0 and points("D-") == pytest.approx(0.7)
+    assert points("A+") == pytest.approx(4.0)
+    assert [letter(points(g)) for g in ("F", "D-", "C", "B+", "A+")] == ["F", "D-", "C", "B+", "A+"]
+    assert letter(2.47) == "B-" and letter(0.2) == "F" and letter(9) == "A+"
+
+
+def score(id, grade):
+    return GoalResult(id=id, grade=grade, evidence_quote="…" if grade else None, comment="…")
+
+
+def test_overall_grade_weights_core_and_skips_unattempted_extras():
+    rubric = [RubricGoal(id="order", npc_id="maria", core=True, label="…", evidence_required="…"),
+              RubricGoal(id="follow_up", npc_id="luis", core=True, label="…", evidence_required="…"),
+              RubricGoal(id="curveball", npc_id="maria", core=False, label="…", evidence_required="…")]
+    # A perfect run in which Maria never asked her quick question is still an A.
+    assert overall_grade(rubric, [score("order", "A"), score("follow_up", "A"),
+                                  score("curveball", None)]) == "A"
+    # A core goal that never came up is an F: an A and an F, equally weighted, is C.
+    assert overall_grade(rubric, [score("order", "A"), score("follow_up", None),
+                                  score("curveball", None)]) == "C"
+    # Optional goals count single: A, A (core) and F (optional) is 14.8/5 = 2.96 = B+.
+    assert overall_grade(rubric, [score("order", "A"), score("follow_up", "A"),
+                                  score("curveball", "F")]) == "B+"
+    assert overall_grade(rubric, []) == "F"

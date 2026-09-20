@@ -257,22 +257,31 @@ curl http://127.0.0.1:8765/v1/grade \
   -d '{"scenario_id":"<uuid>","run_id":"visit-1"}'
 ```
 
-`overall` is **1–10 for how completely the whole goal set was hit**, weighting `core`
-goals above the rest: 10 is every goal achieved and done well, 7 is every core goal,
-5 is about half, 1 is none. `goals_achieved` / `goals_total` are the raw count behind
-it, and `summary` is two or three sentences addressed to the learner, in English.
+The response is the receipt the game prints at the end of a visit: one line per goal,
+keyed by the goal's id (the café's goals use the same ids as the client's quests, so
+each score lands on its quest line), a letter grade **A+ … F** for how well the learner
+did it in the target language, and one sentence of feedback. `grade` is `null` when
+the goal never came up — the learner never sat down with Luis — which is not the same
+as failing it. `overall` is the weighted mean of the letters (core goals count double;
+an unattempted core goal is an F, an unattempted optional one is left out), and
+`summary` is two or three sentences addressed to the learner, in English.
 
 ```json
-{"overall": 7, "goals_achieved": 4, "goals_total": 6,
+{"overall": "B-", "goals_passed": 3, "goals_total": 6,
  "scenario_id": null, "run_id": "visit-1",
- "goals": [
-   {"goal_id": "G1", "achieved": true,
-    "evidence_quote": "Quisiera un café de olla, por favor.",
-    "note": "A full request form with a menu item, and serve_order followed."},
-   {"goal_id": "G2", "achieved": false, "evidence_quote": null,
-    "note": "Maria volunteered the total before it was asked for."}],
- "summary": "You ordered clearly and handled the milk question. Next time ask what something costs before you are told."}
+ "scores": [
+   {"id": "order", "grade": "A",
+    "evidence_quote": "Quiero un café de olla y una concha, por favor.",
+    "comment": "You ordered clearly: «quiero un café de olla y una concha, por favor»."},
+   {"id": "ask_price", "grade": "D-", "evidence_quote": null,
+    "comment": "You never asked what it cost; Maria told you the total."},
+   {"id": "curveball", "grade": null, "evidence_quote": null,
+    "comment": "Maria did not ask you a clarifying question this time."}],
+ "summary": "You ordered naturally and asked Luis a real follow-up about the turtles. Next time ask the price before Maria says it, and reach for «¿cómo?» instead of English when you lose the thread."}
 ```
+
+The letters sit on the scale the client averages with: F is 0, D- is 0.7, then 0.3 a
+step up to A+ at 4.0. C- and up is a pass.
 
 Both inputs have three sources, checked in order:
 
@@ -287,16 +296,17 @@ post `goals` and `transcript` and let the server store nothing. Generated goals
 (`description`) and authored pack goals (`label`) are normalised to one rubric shape,
 so either source grades the same way.
 
-**A goal is only awarded with the learner's own words quoted as evidence.** A grade
-that awards a goal without a quote, or that judges a different goal set than it was
-given, is rejected as provider failure rather than returned. Bodies are capped at
+**A goal is only passed with the learner's own words quoted as evidence.** A grade
+that passes a goal without an `evidence_quote`, or that judges a different goal set
+than it was given, is rejected as provider failure rather than returned. Bodies are capped at
 256 KiB; the transcript at 400 turns and the rubric at 12 goals.
 
 Grading uses the OpenAI Responses API with Pydantic structured output, configured by
 `OPENAI_API_KEY` and `TUTOR_MODEL` (falling back to `SCENARIO_MODEL`); 503 when
-neither is set, and `grader_ready` on `/health` says which. It is the build doc's
-end-of-run tutor. The per-turn director that ticks goals live during a run is still
-not implemented.
+neither is set, and `grader_ready` on `/health` says which. A 502 with `grader_ready`
+true is usually a mistyped model name: the server log names the exception class. It
+is the build doc's end-of-run tutor. The per-turn director that ticks goals live
+during a run is still not implemented.
 
 ## Errors and checks
 
@@ -306,7 +316,7 @@ Errors use `{"detail": ...}`. Statuses: 404 unknown scenario or unrecorded run; 
 Provider exception details are not returned to clients.
 
 ```sh
-uv run pytest                        # 83 tests, no credentials needed
+uv run pytest                        # 85 tests, no credentials needed
 uv run python tools/e2e_check.py     # live end-to-end, needs a running server
 ```
 

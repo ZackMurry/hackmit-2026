@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+import logging
 import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
@@ -11,7 +12,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
 from .grading import (GraderProvider, OpenAIGrader, TranscriptStore, create_grader,
-                      event_text, rubric_goals)
+                      event_text, overall_grade, passed, rubric_goals)
 from .models import (GeneratedScenario, Grade, GradeRequest, GradeResponse,
                      ScenarioRequest, ScenarioResponse, TranscriptTurn)
 from .scene import ScenePack, default_pack_dir
@@ -43,8 +44,11 @@ async def provider_call(awaitable, timeout: float):
         raise HTTPException(503, str(error)) from None
     except TimeoutError:
         raise HTTPException(504, "Provider timed out") from None
-    except Exception:
-        # Provider exceptions may contain credentials or transcripts.
+    except Exception as error:
+        # Provider exceptions may contain credentials or transcripts, so the client gets
+        # a bare 502; the operator gets the class in the server log, which is enough to
+        # tell a mistyped model name from a refusal.
+        logging.getLogger("orchestrator").warning("Provider call failed: %s", type(error).__name__)
         raise HTTPException(502, "Provider failed or returned invalid output") from None
 
 
@@ -208,7 +212,7 @@ def create_app(*, speech: SpeechProvider | None = None,
         "requestBody": {"required": True, "content": {"application/json": {
             "schema": GradeRequest.model_json_schema()}}}})
     async def grade(request: Request):
-        """Score a finished run out of 10 against its goals.
+        """Grade a finished run against its goals, in the shape the receipt prints.
 
         The rubric comes from inline `goals`, else a saved `scenario_id`, else the
         loaded scenario pack. The conversation comes from an inline `transcript`,
@@ -250,19 +254,20 @@ def create_app(*, speech: SpeechProvider | None = None,
             result = await app.state.grader.grade(rubric, transcript)
             if not isinstance(result, Grade):
                 raise ValueError("Grader returned an unexpected type")
-            judged = [goal.goal_id for goal in result.goals]
+            judged = [score.id for score in result.scores]
             if sorted(judged) != sorted(goal.id for goal in rubric):
                 raise ValueError("Grader did not judge exactly the requested goals")
-            # No quote, no goal: an award we cannot show the learner is not an award.
-            if any(g.achieved and not (g.evidence_quote or "").strip() for g in result.goals):
-                raise ValueError("Grader awarded a goal without evidence")
+            # No quote, no pass: a grade we cannot show the learner the reason for is
+            # not a grade.
+            if any(passed(s) and not (s.evidence_quote or "").strip() for s in result.scores):
+                raise ValueError("Grader passed a goal without evidence")
             return result
 
         result = await provider_call(validated(), timeout)
-        return GradeResponse(**result.model_dump(), scenario_id=payload.scenario_id,
-                             run_id=payload.run_id,
-                             goals_achieved=sum(g.achieved for g in result.goals),
-                             goals_total=len(result.goals))
+        return GradeResponse(**result.model_dump(), overall=overall_grade(rubric, result.scores),
+                             scenario_id=payload.scenario_id, run_id=payload.run_id,
+                             goals_passed=sum(passed(s) for s in result.scores),
+                             goals_total=len(result.scores))
 
     @app.delete("/v1/speech/sessions/{session_id}", status_code=204)
     async def end_speech_session(session_id: UUID):

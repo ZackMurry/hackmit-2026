@@ -28,9 +28,12 @@ public class ConversationClient : MonoBehaviour
 
     /// <summary>
     /// One visit: the same run_id goes to every NPC so what the player ordered from the
-    /// waitress is known to the friend at the table. New every time the scene starts.
+    /// waitress is known to the friend at the table, and the server records every turn
+    /// under it for grading. New every time the scene starts.
     /// </summary>
     public string RunId { get; private set; }
+    /// <summary>Turns the server accepted this run; zero means there is nothing to grade.</summary>
+    public int TurnsSent { get; private set; }
 
     /// <summary>One learner turn: a WAV recording for one NPC within one session.</summary>
     public class Turn
@@ -180,6 +183,7 @@ public class ConversationClient : MonoBehaviour
             yield break;
         }
 
+        TurnsSent++;
         var reply = new Reply
         {
             heard = parsed.user_transcript ?? "",
@@ -205,6 +209,31 @@ public class ConversationClient : MonoBehaviour
         using var req = UnityWebRequest.Delete($"{Base}/v1/speech/sessions/{sessionId}");
         req.timeout = 10;
         yield return req.SendWebRequest();
+    }
+
+    /// <summary>
+    /// Grade this run (<c>POST /v1/grade</c>): the server re-reads everything said under
+    /// <see cref="RunId"/> and returns the receipt's JSON (see scores.json for the shape),
+    /// handed over raw so the caller keeps its own DTO. Exactly one callback is called.
+    /// </summary>
+    public IEnumerator Grade(Action<string> onJson, Action<string> onError)
+    {
+        if (!IsOnline)
+        {
+            onError?.Invoke("offline");
+            yield break;
+        }
+        using var req = new UnityWebRequest($"{Base}/v1/grade", "POST")
+        {
+            uploadHandler = new UploadHandlerRaw(System.Text.Encoding.UTF8.GetBytes($"{{\"run_id\":\"{RunId}\"}}")) { contentType = "application/json" },
+            downloadHandler = new DownloadHandlerBuffer(),
+            timeout = timeoutSeconds,
+        };
+        yield return req.SendWebRequest();
+        if (req.result != UnityWebRequest.Result.Success)
+            onError?.Invoke(Describe(req));
+        else
+            onJson?.Invoke(req.downloadHandler.text);
     }
 
     /// <summary>Fetch the authored cast; exactly one of the callbacks is called. Offline: onError.</summary>

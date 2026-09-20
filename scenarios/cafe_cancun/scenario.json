@@ -47,17 +47,17 @@
   "gestures": ["wave", "nod", "shake_head", "laugh", "think", "shrug", "point_menu", "lean_in"],
 
   "goals": [
-    { "id": "G1", "npc_id": "maria", "core": true,  "label": "Order something in Spanish",
+    { "id": "order", "npc_id": "maria", "core": true,  "label": "Order something in Spanish",
       "evidence_required": "The learner names a menu item inside a request form (quiero, quisiera, me da, me pones, para mí, un X por favor), and serve_order fires within the next two turns. Pointing, English, or only saying 'sí' to a suggestion does not count." },
-    { "id": "G2", "npc_id": "maria", "core": true,  "label": "Ask what something costs, before being told",
+    { "id": "ask_price", "npc_id": "maria", "core": true,  "label": "Ask what something costs, before being told",
       "evidence_required": "The learner asks a price question (¿cuánto cuesta…?, ¿cuánto es?, ¿cuánto le debo?, ¿a cómo está…?) before Maria volunteers the total." },
-    { "id": "G3", "npc_id": "maria", "core": false, "label": "Handle an unexpected fast question",
+    { "id": "curveball", "npc_id": "maria", "core": false, "label": "Handle an unexpected fast question",
       "evidence_required": "Maria asks one of her clarifying questions and the learner answers appropriately within two turns, in Spanish." },
-    { "id": "G4", "npc_id": "luis",  "core": true,  "label": "Hold a personal conversation",
+    { "id": "small_talk", "npc_id": "luis",  "core": true,  "label": "Hold a personal conversation",
       "evidence_required": "At least two full-clause statements about themselves across at least three back-and-forth exchanges. One-word answers do not count." },
-    { "id": "G5", "npc_id": "luis",  "core": true,  "label": "Ask a follow-up about something Luis said",
+    { "id": "follow_up", "npc_id": "luis",  "core": true,  "label": "Ask a follow-up about something Luis said",
       "evidence_required": "The learner's question refers to content from one of Luis's previous two turns. Quote both his line and their question. A bare '¿y tú?' does not count." },
-    { "id": "G6", "npc_id": "any",   "core": false, "label": "Recover in Spanish when lost",
+    { "id": "repair", "npc_id": "any",   "core": false, "label": "Recover in Spanish when lost",
       "evidence_required": "The learner uses a Spanish repair phrase at least once (¿cómo?, ¿mande?, ¿puedes repetir?, más despacio por favor, no entendí). Switching to English does not count." }
   ],
 

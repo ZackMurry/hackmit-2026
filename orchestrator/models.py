@@ -63,8 +63,9 @@ class ScenarioResponse(GeneratedScenario):
 
 # --------------------------------------------------------------------------- grading
 
-# Goal ids come from two places with different conventions: generated scenarios use
-# snake_case, the authored pack uses "G1". The rubric accepts both.
+# Goal ids are snake_case quest ids in both the authored pack and generated scenarios
+# (the client prints each score on the quest line with the same id), but the rubric
+# accepts anything identifier-shaped so a hand-written "G1" still grades.
 GoalId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")]
 # "any" is a real npc_id in the authored pack: a goal that counts with any character.
 RubricNpcId = Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")]
@@ -107,23 +108,35 @@ class GradeRequest(Model):
     run_id: Annotated[str, Field(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
 
 
+# The scale the client prints. Ordered worst to best; grading.py turns it into points.
+LetterGrade = Literal["F", "D-", "D", "D+", "C-", "C", "C+", "B-", "B", "B+", "A-", "A", "A+"]
+
+
 class GoalResult(Model):
-    goal_id: GoalId
-    achieved: bool
-    # The learner's exact words that earned it. No quote, no goal.
+    """One line of the receipt: a goal, its grade, and a word from the tutor."""
+
+    id: GoalId
+    # None means the goal never came up (never spoke to that character, the situation
+    # never arose), which is not the same as failing it.
+    grade: LetterGrade | None
+    # One sentence for the learner: what earned the grade, or what would have.
+    comment: Text
+    # The learner's exact words behind a passing grade. No quote, no pass.
     evidence_quote: Text | None
-    note: Text
 
 
 class Grade(Model):
-    # How completely the whole goal set was hit: 10 is every goal, 1 is none.
-    overall: Annotated[int, Field(ge=1, le=10)]
-    goals: Annotated[list[GoalResult], Field(max_length=12)]
+    """What the grader returns; the overall grade is derived, not asked for."""
+
+    scores: Annotated[list[GoalResult], Field(max_length=12)]
     summary: Text
 
 
 class GradeResponse(Grade):
+    # Weighted mean of the graded goals (core goals count double). An unattempted core
+    # goal counts as an F; an unattempted optional one is left out.
+    overall: LetterGrade
     scenario_id: UUID | None = None
     run_id: str | None = None
-    goals_achieved: int
+    goals_passed: int
     goals_total: int
