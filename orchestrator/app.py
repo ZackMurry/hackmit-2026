@@ -11,11 +11,11 @@ from uuid import UUID, uuid4
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
-from .director import Director, DirectorProvider, GoalStore, create_director_provider
+from .director import RUN_ID, Director, DirectorProvider, GoalStore, create_director_provider
 from .grading import (GraderProvider, OpenAIGrader, TranscriptStore, create_grader,
                       event_text, overall_grade, passed, rubric_goals)
 from .models import (GeneratedScenario, Grade, GradeRequest, GradeResponse,
-                     ScenarioRequest, ScenarioResponse, TranscriptTurn)
+                     ScenarioRequest, ScenarioResponse, SceneNote, TranscriptTurn)
 from .scene import ScenePack, default_pack_dir
 from .scenarios import OpenAIScenarios, ScenarioProvider, ScenarioStore
 from .speech import SpeechInputError, SpeechUnavailable, SUPPORTED_AUDIO_TYPES, SpeechInput, SpeechOutput, SpeechProvider, load_speech_provider
@@ -301,6 +301,19 @@ def create_app(*, speech: SpeechProvider | None = None,
                              scenario_id=payload.scenario_id, run_id=payload.run_id,
                              goals_passed=sum(passed(s) for s in result.scores),
                              goals_total=len(result.scores))
+
+    @app.post("/v1/runs/{run_id}/notes", status_code=204)
+    async def note_run(run_id: str, note: SceneNote):
+        """Tell a character about the scene without taking a turn (see SceneNote)."""
+        if not RUN_ID.match(run_id):
+            raise HTTPException(422, "run_id must be [A-Za-z0-9_-], up to 64 characters")
+        provider = app.state.speech
+        if provider is None:
+            raise HTTPException(503, "Speech adapter is not configured")
+        if not hasattr(provider, "note"):
+            raise HTTPException(501, "Speech adapter does not support scene notes")
+        await provider_call(provider.note(run_id, note.npc_id, note.key, note.text), timeout)
+        return Response(status_code=204)
 
     @app.delete("/v1/speech/sessions/{session_id}", status_code=204)
     async def end_speech_session(session_id: UUID):

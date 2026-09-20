@@ -106,6 +106,10 @@ Flip `status` to `"done"` (from code via `QuestManager.Instance.Complete(id)`, o
 file) and the HUD ticks it off. `action` names the server scene action that completes the quest
 automatically. Quest completion is also a trigger for NPC moves.
 
+A move may carry `"tell": [{"npc": "luis", "key": "floor", "when": "start" | "arrive", "text": "…"}]`
+— scene notes the server passes to that character when the move sets off or arrives (see
+`docs/api.md`, Scene notes).
+
 ### The bill — `EpisodeSummary`
 
 The episode ends when every quest is done (the server's scene actions tick them) or when the
@@ -225,8 +229,12 @@ back to the counter (`"trigger": "action"`). Then hold **E** facing Luis to chat
 you ordered, and each character overhears what you say to the other while they are both at the
 table (a `contextual_update` on the listener's session). Only one character talks at a time: a
 line that arrives while the other is mid-sentence waits (`NpcConversation.maxWaitForFloor`), and
-the one not talking turns to watch the one who is (`NpcLookAt.watchOthers`). The characters,
-prompts, menu and greeting audio live in
+the one not talking turns to watch the one who is (`NpcLookAt.watchOthers`). Only one can be
+*spoken to* at a time as well: with both in reach, the prompt belongs to the one you are looking
+at most directly, and an NPC mid-turn keeps it (`NpcInteractable.Focused`). When Maria sets off
+to take the order her move's `tell` list posts a scene note to Luis (`POST /v1/runs/{run}/notes`)
+so he stops asking you questions you are not going to answer, and another when she leaves so he
+picks the thread back up. The characters, prompts, menu and greeting audio live in
 `scenarios/cafe_cancun/` (see `docs/api.md`). Avatars: `Avatars/Female_Adult_08` and
 `Avatars/Male_Adult_08` (Microsoft Rocketbox, MIT).
 

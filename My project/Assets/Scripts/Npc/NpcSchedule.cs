@@ -91,6 +91,7 @@ public class NpcSchedule : MonoBehaviour
             return;
         if (!string.IsNullOrEmpty(done.sit))
             GetComponent<NpcSitter>()?.Sit(done.sit);
+        Tell(done, NpcNote.WhenArrive);
         if (string.IsNullOrEmpty(done.id))
             return;
         foreach (var move in moves)
@@ -130,7 +131,19 @@ public class NpcSchedule : MonoBehaviour
         }
         Debug.Log($"{name}: starting move '{move.id}' ({move.path.Length} waypoint(s))");
         running = move;
+        Tell(move, NpcNote.WhenStart);
         walker.Walk(move.path, move.speed, move.endYaw, move.loop);
+    }
+
+    /// <summary>Send the move's scene notes due at this moment to the conversation server.</summary>
+    void Tell(NpcMove move, string when)
+    {
+        var client = ConversationClient.Instance;
+        if (client == null || move.tell == null)
+            return;
+        foreach (var note in move.tell)
+            if (note != null && !string.IsNullOrEmpty(note.npc) && (note.when ?? NpcNote.WhenStart) == when)
+                client.StartCoroutine(client.Note(note.npc, note.key, note.text));
     }
 
     void OnDestroy()

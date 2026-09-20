@@ -108,6 +108,16 @@ class GradeRequest(Model):
     run_id: Annotated[str, Field(max_length=64, pattern=r"^[A-Za-z0-9_-]+$")] | None = None
 
 
+class SceneNote(Model):
+    """Something the game tells one character about the scene, outside any turn: who
+    has just walked up, whose turn it is to speak. Keyed so a later note on the same
+    subject replaces the earlier one; an empty text forgets the subject."""
+
+    npc_id: Identifier
+    key: Identifier
+    text: Annotated[str, Field(max_length=2000)] = ""
+
+
 class GoalTick(Model):
     """A goal met during the run, as the director saw it. No quote, no tick."""
 

@@ -176,6 +176,9 @@ class RunState:
     total_mxn: int = 0
     to_go: bool | None = None
     bill_shown: bool = False
+    # Scene notes still in force, per character then per subject, so a character
+    # whose conversation opens later is told what everyone else already knows.
+    notes: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def order_summary_es(self, menu: Menu) -> str:
         """The ``{{user_order}}`` dynamic variable, in Spanish."""

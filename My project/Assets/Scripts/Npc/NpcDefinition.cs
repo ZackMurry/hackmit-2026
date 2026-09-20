@@ -105,5 +105,30 @@ public class NpcMove
     [Tooltip("Seat id (seats.json) to sit down in on arrival. Empty = stay standing.")]
     public string sit = "";
 
+    [Tooltip("Scene notes for the conversation server to pass to characters when this move " +
+             "sets off or arrives, e.g. tell Luis that Maria is coming to take the order.")]
+    public NpcNote[] tell = Array.Empty<NpcNote>();
+
     public bool HasEndYaw => !float.IsNaN(endYaw);
+}
+
+/// <summary>
+/// Something a character is told about the scene without anyone taking a turn
+/// (<c>POST /v1/runs/{run}/notes</c>). Notes with the same <c>key</c> replace each
+/// other, so "Maria is on her way" is later overwritten by "Maria has left".
+/// </summary>
+[Serializable]
+public class NpcNote
+{
+    public const string WhenStart = "start";
+    public const string WhenArrive = "arrive";
+
+    [Tooltip("npc id of the character being told (e.g. luis).")]
+    public string npc = "";
+    [Tooltip("Subject of the note; a later note with the same key replaces this one.")]
+    public string key = "floor";
+    [Tooltip("What the character can see happening, in plain English. Empty withdraws the note.")]
+    public string text = "";
+    [Tooltip("\"start\": when the move sets off (after its delay). \"arrive\": when the NPC gets there.")]
+    public string when = WhenStart;
 }

@@ -228,3 +228,37 @@ def test_the_other_character_at_the_table_overhears_a_turn():
         finally:
             await provider.aclose()
     asyncio.run(run())
+
+
+def test_a_scene_note_reaches_the_character_now_and_when_they_open_later():
+    async def run():
+        provider, sockets, _ = make_provider()
+        try:
+            await provider.respond(turn(run_id="visit-11"))              # Luis is open
+            await provider.note("visit-11", "luis", "floor", "Maria is walking over to take the order.")
+            await provider.note("visit-11", "maria", "floor", "The customer is talking to Luis.")
+            notes = [m["text"] for m in sockets[0].sent if m["type"] == "contextual_update"]
+            assert notes == ["Scene note (floor): Maria is walking over to take the order."]
+            # Maria's conversation opens later and is told what stands for her.
+            await provider.respond(turn(npc="maria", run_id="visit-11"))
+            assert [m["text"] for m in sockets[1].sent if m["type"] == "contextual_update"][:1] \
+                == ["Scene note (floor): The customer is talking to Luis."]
+            # A withdrawn note is not repeated on reopen; another visit hears nothing.
+            await provider.note("visit-11", "maria", "floor", "")
+            await provider.respond(turn(run_id="visit-12"))
+            assert not [m for m in sockets[2].sent if m["type"] == "contextual_update"]
+            assert provider.runs["visit-11"].notes == {"luis": {"floor": "Scene note (floor): Maria is walking over to take the order."},
+                                                       "maria": {}}
+        finally:
+            await provider.aclose()
+    asyncio.run(run())
+
+
+def test_scene_note_endpoint(tmp_path):
+    provider, sockets, _ = make_provider()
+    with TestClient(create_app(speech=provider, data_dir=tmp_path, runs_dir=tmp_path / "runs")) as client:
+        body = {"npc_id": "luis", "key": "floor", "text": "Maria is on her way."}
+        assert client.post("/v1/runs/visit-1/notes", json=body).status_code == 204
+        assert client.post("/v1/runs/bad.id/notes", json=body).status_code == 422
+        assert client.post("/v1/runs/visit-1/notes", json={"npc_id": "luis"}).status_code == 422
+        assert provider.runs["visit-1"].notes["luis"]["floor"].endswith("Maria is on her way.")
