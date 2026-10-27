@@ -178,6 +178,26 @@ class ToolSpec(Model):
     parameters: dict[str, Any] = {}
 
 
+class AmbienceSpec(Model):
+    """One generated sound: a looping bed or a one-shot tied to a scene action.
+
+    ``prompt`` and ``duration_seconds`` drive ``tools/make_ambience.py``; the rest is
+    mixing guidance the game client reads from ``GET /v1/ambience``. Files are
+    generated once and committed, never at runtime.
+    """
+
+    id: Identifier
+    file: Annotated[str, Field(pattern=r"^[A-Za-z0-9_\-]+\.mp3$")]
+    prompt: str
+    duration_seconds: Annotated[float, Field(ge=0.5, le=30)]
+    loop: bool = False
+    prompt_influence: Annotated[float, Field(ge=0.0, le=1.0)] = 0.3
+    volume: Annotated[float, Field(ge=0.0, le=1.0)] = 0.5
+    # How far the client should duck this sound while anyone is speaking. Negative dB.
+    duck_db: Annotated[float, Field(ge=-60, le=0)] = 0.0
+    spatial: bool = False
+
+
 class ScenarioFile(Model):
     scenario_id: Identifier
     title: str
@@ -192,6 +212,9 @@ class ScenarioFile(Model):
     goals: list[GoalSpec] = []
     tools: dict[Identifier, ToolSpec] = {}
     soft_timeout: SoftTimeoutSpec | None = None
+    ambience: list[AmbienceSpec] = []
+    # tool name -> ambience id of the one-shot the client plays when that action fires.
+    action_sfx: dict[Identifier, Identifier] = {}
 
     @model_validator(mode="after")
     def _references(self):
@@ -209,6 +232,12 @@ class ScenarioFile(Model):
         for goal in self.goals:
             if goal.npc_id not in known:
                 raise ValueError(f"Goal {goal.id} references unknown npc {goal.npc_id}")
+        sounds = [a.id for a in self.ambience]
+        if len(set(sounds)) != len(sounds):
+            raise ValueError("Duplicate ambience id in scenario")
+        for tool, sound in self.action_sfx.items():
+            if sound not in sounds:
+                raise ValueError(f"action_sfx for {tool} names unknown ambience id {sound!r}")
         return self
 
 
@@ -301,6 +330,23 @@ class ScenePack:
             lines.append(f"- {item.name_es}: {price}{suffix}")
         return "\n".join(lines)
 
+    # -- ambience ---------------------------------------------------------------
+
+    @staticmethod
+    def ambience_url(sound_id: str) -> str:
+        return f"/v1/ambience/{sound_id}"
+
+    def ambience_path(self, sound_id: str) -> Path | None:
+        """The file behind an ambience id, or None if the id is not in the scenario.
+
+        The id is looked up in the scenario's own list and the filename comes from
+        there, never from the caller, so a request cannot walk out of the pack.
+        """
+        for sound in self.scenario.ambience:
+            if sound.id == sound_id:
+                return (self.root or default_pack_dir()) / "ambience" / sound.file
+        return None
+
     # -- pricing ----------------------------------------------------------------
 
     def price(self, item_ids: list[str]) -> int:
@@ -324,7 +370,13 @@ class ScenePack:
             if handler is None:
                 return ToolOutcome(result=f"Unknown tool '{tool}'. Continue the "
                                           f"conversation without it.", is_error=True)
-            return handler(npc_id, params, state)
+            outcome = handler(npc_id, params, state)
+            sound = self.scenario.action_sfx.get(tool)
+            if outcome.action is not None and sound:
+                # Only a call that really changed the scene carries a sound: a repeated
+                # serve_order has no action, so the cup is not set down twice.
+                outcome.action["sfx"] = self.ambience_url(sound)
+            return outcome
         except Exception:  # a tool must never take the conversation down with it
             return ToolOutcome(result="That did not work. Carry on naturally.", is_error=True)
 

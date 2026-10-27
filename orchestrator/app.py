@@ -1,8 +1,12 @@
 import asyncio
 import base64
+import importlib
+import inspect
 import json
 import logging
 import os
+import wave
+import io
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal
@@ -70,7 +74,20 @@ def create_app(*, speech: SpeechProvider | None = None,
         with suppress(Exception):
             pack = ScenePack.load(default_pack_dir())
 
+    audio_dir = Path(os.getenv("RUN_AUDIO_DIR", str(transcripts.directory.parent / "audio")))
     metrics = Metrics()
+
+    def optional(module: str):
+        """A lane's module, if it is there. The voice path must keep working when the
+        coaching or ambience code is missing or fails to import."""
+        try:
+            return importlib.import_module(f".{module}", __package__)
+        except Exception as error:  # noqa: BLE001
+            logging.getLogger("orchestrator").warning("%s unavailable: %s", module,
+                                                      type(error).__name__)
+            return None
+
+    brain, ambience = optional("brain_routes"), optional("ambience")
 
     @asynccontextmanager
     async def lifespan(app):
@@ -80,14 +97,32 @@ def create_app(*, speech: SpeechProvider | None = None,
         app.state.scenarios = configured
         app.state.grader = grader if grader is not None else create_grader()
         judge = director if director is not None else create_director_provider()
-        # No `on_note`: the director's stage directions are recorded in the goal file
-        # but never delivered to the character. The café does not adapt to the learner.
-        app.state.director = Director(judge, goals, transcripts, timeout) if judge else None
+        async def steer(run_id: str, npc_id: str, text: str):
+            # The director's stage direction rides the same channel as a scene note,
+            # so it reaches the character now and again if their conversation reopens.
+            if hasattr(app.state.speech, "note"):
+                await app.state.speech.note(run_id, npc_id, "director", text)
+
+        extra = {"on_note": steer} if "on_note" in inspect.signature(Director).parameters else {}
+        app.state.director = Director(judge, goals, transcripts, timeout, **extra) if judge else None
         if judge is not None and hasattr(judge, "warm_up"):
             # The first call with a new schema is slow; pay for it before anyone speaks.
             warming = asyncio.create_task(judge.warm_up())
             warming.add_done_callback(lambda task: task.cancelled() or task.exception())
-        app.state.metrics = metrics
+        app.state.transcripts, app.state.pack, app.state.scenario_store = transcripts, pack, store
+        app.state.metrics, app.state.audio_dir = metrics, audio_dir
+        # The coach (hints) and the tutor (written report) are optional: without an
+        # OpenAI key the café still talks, it just cannot explain itself afterwards.
+        app.state.feedback = app.state.coach = None
+        for name, module, factory in (("coach", "coach", "create_coach"),
+                                      ("feedback", "feedback", "create_feedback_service")):
+            loaded = optional(module) if brain is not None else None
+            with suppress(Exception):
+                setattr(app.state, name, getattr(loaded, factory)() if loaded else None)
+        if app.state.coach is not None and hasattr(app.state.coach, "warm_up"):
+            # A learner who asks for a hint is already lost; do not make the first one slow.
+            hinting = asyncio.create_task(app.state.coach.warm_up())
+            hinting.add_done_callback(lambda task: task.cancelled() or task.exception())
         app.state.speech = speech
         if speech is None and os.getenv("SPEECH_ADAPTER"):
             app.state.speech = load_speech_provider(os.environ["SPEECH_ADAPTER"])
@@ -107,10 +142,17 @@ def create_app(*, speech: SpeechProvider | None = None,
                 await app.state.grader.aclose()
             if app.state.director is not None:
                 await app.state.director.aclose()
+            for extra in (app.state.coach, app.state.feedback):
+                if extra is not None and hasattr(extra, "aclose"):
+                    with suppress(Exception):
+                        await extra.aclose()
             if app.state.speech is not None and hasattr(app.state.speech, "aclose"):
                 await app.state.speech.aclose()
 
     app = FastAPI(title="Scenar.io API", version="0.2.0", lifespan=lifespan)
+    for module in (brain, ambience):
+        if module is not None and hasattr(module, "build_router"):
+            app.include_router(module.build_router())
 
     @app.get("/v1/metrics")
     async def latency():
@@ -357,7 +399,31 @@ def create_app(*, speech: SpeechProvider | None = None,
         return SpeechInput(audio, media_type, session_id, npc_id, scenario_id, context,
                            sample_rate, run_id, learner_name, learner_level, interrupted_at_ms)
 
-    async def after_turn(turn: SpeechInput, heard, said, actions, unsure,
+    def keep_clip(run: str, turn: SpeechInput, heard: str, unsure, min_logprob):
+        """The learner's own voice, kept for the end-of-visit pronunciation pass."""
+        if (not turn.audio or not RUN_ID.match(run)
+                or turn.media_type not in {"audio/wav", "audio/x-wav", "audio/pcm"}):
+            return
+        folder = audio_dir / run
+        folder.mkdir(parents=True, exist_ok=True)
+        index = len(list(folder.glob("turn_*.wav"))) + 1
+        if index > 200:
+            return
+        data = turn.audio
+        if turn.media_type == "audio/pcm":
+            buffer = io.BytesIO()
+            with wave.open(buffer, "wb") as out:
+                out.setnchannels(1)
+                out.setsampwidth(2)
+                out.setframerate(turn.sample_rate)
+                out.writeframes(data)
+            data = buffer.getvalue()
+        (folder / f"turn_{index:03d}.wav").write_bytes(data)
+        (folder / f"turn_{index:03d}.json").write_text(json.dumps({
+            "text": heard, "npc_id": turn.npc_id, "low_confidence_words": list(unsure),
+            "min_logprob": min_logprob}, ensure_ascii=False), encoding="utf-8")
+
+    async def after_turn(turn: SpeechInput, heard, said, actions, unsure, min_logprob,
                          previous_heard=None) -> list[str]:
         """Record the evidence and wake the director. Best effort: none of this may
         cost the learner the turn they just paid for."""
@@ -376,6 +442,8 @@ def create_app(*, speech: SpeechProvider | None = None,
                    for action in actions]
         with suppress(Exception):
             await asyncio.to_thread(transcripts.append, run, record)
+        with suppress(Exception):
+            await asyncio.to_thread(keep_clip, run, turn, heard or "", unsure or (), min_logprob)
         # The director reads the run back and ticks goals after the reply has gone
         # out; the list returned here is therefore the state before this turn.
         achieved: list[str] = []
@@ -411,7 +479,7 @@ def create_app(*, speech: SpeechProvider | None = None,
                 or not output.audio or len(output.audio) > MAX_AUDIO_BYTES
                 or output.media_type not in SUPPORTED_AUDIO_TYPES):
             raise ValueError("Invalid speech output")
-        await after_turn(turn, None, output.agent_transcript, [], ())
+        await after_turn(turn, None, output.agent_transcript, [], (), None)
         headers = {"X-Session-ID": str(session_id), "Cache-Control": "no-store"}
         if output.timings_ms:
             headers["Server-Timing"] = ", ".join(
@@ -451,7 +519,7 @@ def create_app(*, speech: SpeechProvider | None = None,
         output = await provider_call(validated(), timeout)
         actions = [a for a in output.actions if isinstance(a, dict)]
         achieved = await after_turn(turn, output.user_transcript, output.agent_transcript,
-                                    actions, output.low_confidence_words,
+                                    actions, output.low_confidence_words, output.min_logprob,
                                     output.previous_reply_heard)
         headers = {"X-Session-ID": str(session_id), "Cache-Control": "no-store"}
         if output.sample_rate is not None:
@@ -510,7 +578,7 @@ def create_app(*, speech: SpeechProvider | None = None,
 
         async def body():
             heard = said = ""
-            unsure, actions = (), []
+            unsure, min_logprob, actions = (), None, []
             try:
                 async with asyncio.timeout(timeout):
                     pending = first
@@ -518,6 +586,7 @@ def create_app(*, speech: SpeechProvider | None = None,
                         event, kind = pending, pending["type"]
                         if kind == "transcript":
                             heard, unsure = event["text"], event["low_confidence_words"]
+                            min_logprob = event.get("min_logprob")
                         elif kind == "audio":
                             event = {**event, "pcm_base64": base64.b64encode(event["pcm"]).decode("ascii")}
                             del event["pcm"]
@@ -528,7 +597,7 @@ def create_app(*, speech: SpeechProvider | None = None,
                         elif kind == "done":
                             event = {**event, "session_id": str(session_id), "npc_id": npc_id,
                                      "goals_achieved": await after_turn(
-                                         turn, heard, said, actions, unsure,
+                                         turn, heard, said, actions, unsure, min_logprob,
                                          event.get("previous_reply_heard"))}
                         yield line(event)
                         pending = await anext(events, None)

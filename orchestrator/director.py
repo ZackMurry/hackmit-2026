@@ -11,11 +11,11 @@ Same evidence rule as grading: no quote, no tick, and the quote must be words th
 learner actually said, checked here rather than trusted. Once ticked, a goal stays
 ticked; the end-of-run grader decides how *well* it was done, the director only whether.
 
-The same call also notes what the learner never sees during the visit: their mistakes,
-how they are coping, and now and then a stage direction for the character. All of it is
-stored beside the run. Delivering a note to the character is the caller's choice
-(`on_note`); the app does not wire it, so the café never adapts to the learner. The
-learner is never corrected mid-conversation.
+The same call also does the quiet pedagogy the learner never sees during the visit: it
+logs mistakes for the feedback report, reads how the learner is coping, and now and then
+writes one stage direction that is slipped to the character so the scene adapts (a lost
+learner gets an easier Maria) with no visible machinery. The learner is never corrected
+mid-conversation; all of this is stored beside the run and shown afterwards.
 
 The request is laid out for prompt caching: instructions and the whole rubric first and
 never changing, turns appended one message each, the open goal ids last.
@@ -268,7 +268,7 @@ class OpenAIDirector:
 
 class GoalStore:
     """What the director knows about a run: the goals met so far, and the mistakes,
-    learner states, notes and counters it observed along the way. One small JSON file
+    learner states, notes and counters behind the feedback report. One small JSON file
     per run, next to its transcript, rewritten whole."""
 
     def __init__(self, directory: Path):
@@ -371,7 +371,7 @@ class Director:
         }
 
     async def insights(self, run_id: str) -> dict:
-        """Everything stored for the run."""
+        """Everything stored for the run; the feedback report is built on this."""
         return await asyncio.to_thread(self.store.read, run_id)
 
     async def count(self, run_id: str, counter: str):

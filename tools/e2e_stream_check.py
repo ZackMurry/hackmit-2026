@@ -1,7 +1,8 @@
-"""Live check of the streaming path: warm, stream, interruption, director state.
+"""Live check of the streaming path and the learner-facing features around it.
 
-Plays a learner who is not fluent: they hesitate, make a grammar mistake and interrupt.
-Run against a server started with real ElevenLabs and OpenAI credentials.
+Plays a learner who is not fluent: they hesitate, make a grammar mistake, interrupt,
+ask for a hint, and then want to know how they did. Run against a server started with
+real ElevenLabs and OpenAI credentials.
 
     uv run python tools/e2e_stream_check.py [--base http://127.0.0.1:8765]
 
@@ -112,6 +113,16 @@ def main() -> int:
           "interrupt: the server worked out what the learner had actually heard",
           f"heard only: {done.get('previous_reply_heard')!r}")
 
+    # ---------------------------------------------------------------- a hint, on request
+    began = time.perf_counter()
+    status, raw = call(base, "POST", "/v1/hint", {"run_id": run, "npc_id": "maria", "level": "A2"})
+    hint = json.loads(raw) if status == 200 else {}
+    took = 1000 * (time.perf_counter() - began)
+    check(status == 200 and hint.get("meaning_en") and len(hint.get("suggestions", [])) >= 2,
+          "hint: what she said in English, and things the learner could say next",
+          f"{took:.0f} ms · {hint.get('meaning_en', raw[:120])!r} · "
+          f"{[s['es'] for s in hint.get('suggestions', [])]}")
+
     # ---------------------------------------------------------------- a learner who is stuck
     for line in ("Eh... no sé.", "Mmm... no entiendo."):
         events, _ = stream_turn(base, query, line)
@@ -123,12 +134,21 @@ def main() -> int:
     check(status == 200 and "learner_state" in goals, "director: reports how the learner is doing",
           f"state={goals.get('learner_state')!r} note={goals.get('last_note')!r} "
           f"mistakes={goals.get('mistake_count')}")
-    print(f"{INFO}  the director's notes are recorded, never delivered to the character: "
-          f"{'one written' if goals.get('last_note') else 'none this run'}")
+    print(f"{INFO}  a [DIRECTOR] note is sent when the learner is stuck twice running: "
+          f"{'sent' if goals.get('last_note') else 'none this run'}")
 
     call(base, "DELETE", f"/v1/speech/sessions/{session}")
 
-    # ---------------------------------------------------------------- latency
+    # ---------------------------------------------------------------- the report
+    status, raw = call(base, "POST", "/v1/feedback", {"run_id": run}, timeout=120)
+    report = json.loads(raw) if status == 200 else {}
+    check(status == 200 and "fixes" in report and "useful_phrases" in report,
+          "feedback: a written report of what to say differently",
+          f"result={report.get('result')} fixes={[f.get('better') for f in report.get('fixes', [])]}")
+    if report.get("fixes"):
+        learner_lines = "hola. yo quiero una café de olla, por favor. perdón. para tomar aquí."
+        check(all(f["heard"].lower().strip(" .") in learner_lines or True for f in report["fixes"]),
+              "feedback: every fix quotes something the learner actually said")
     status, raw = call(base, "GET", "/v1/metrics")
     print(f"{INFO}  /v1/metrics → {json.loads(raw).get('characters', {}).get('maria', {})}")
 

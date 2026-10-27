@@ -136,7 +136,7 @@ LearnerState = Literal["fine", "hesitant", "stuck", "distressed"]
 
 class Mistake(Model):
     """Something the learner said that a native speaker would say differently. Logged
-    silently during the visit and never shown to them."""
+    silently during the visit; only the feedback report ever shows it."""
 
     quote: Text
     correction: Text
@@ -193,3 +193,89 @@ class GradeResponse(Grade):
     run_id: str | None = None
     goals_passed: int
     goals_total: int
+
+
+# --------------------------------------------------------------------------- coaching
+
+RunId = Annotated[str, Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")]
+Level = Literal["A1", "A2", "B1", "B2"]
+
+
+class HintRequest(Model):
+    run_id: RunId
+    npc_id: Identifier
+    level: Level | None = None
+
+
+class Suggestion(Model):
+    es: Text
+    en: Text
+
+
+class Hint(Model):
+    """Help the learner asked for: what was just said, and things they could say next."""
+
+    meaning_en: Text
+    suggestions: Annotated[list[Suggestion], Field(min_length=1, max_length=3)]
+    tip: Text
+
+
+class FeedbackRequest(Model):
+    run_id: RunId
+    scenario_id: UUID | None = None
+
+
+class Fix(Model):
+    heard: Text
+    better: Text
+    why_en: Text
+    category: MistakeCategory = "other"
+
+
+class UsefulPhrase(Model):
+    es: Text
+    en: Text
+    when: Text
+
+
+class WentWell(Model):
+    quote: Text
+    note: Text
+
+
+class ReportGoal(Model):
+    id: GoalId
+    label: Text
+    done: bool
+    evidence: Text | None = None
+
+
+class PronunciationImpression(Model):
+    turn: int
+    heard: Text
+    problem_words: Annotated[list[str], Field(max_length=5)]
+    impression: Text
+
+
+class Pronunciation(Model):
+    impressions: list[PronunciationImpression]
+    disclaimer: Text
+
+
+class FeedbackReport(Model):
+    """The page the learner reads after the visit: what to say differently, never a
+    lecture. Every quote in it was checked against what the learner actually said."""
+
+    run_id: str
+    result: Literal["pass", "partial", "retry"]
+    stars: Annotated[int, Field(ge=0, le=3)]
+    goals: list[ReportGoal]
+    fixes: Annotated[list[Fix], Field(max_length=3)]
+    useful_phrases: Annotated[list[UsefulPhrase], Field(max_length=3)]
+    went_well: WentWell | None
+    practice_words: Annotated[list[str], Field(max_length=8)]
+    pronunciation: Pronunciation | None
+    counters: dict[str, int]
+    next_visit: Text
+    summary: Text
+    html_path: str | None = None

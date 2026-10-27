@@ -223,7 +223,39 @@ def test_npcs_endpoint_exposes_aliases():
     assert "mariana" in maria["aliases"]
 
 
-# ---------------------------------------------------------------- voice data
+# ---------------------------------------------------------------- sound and voice data
+
+def test_scene_actions_carry_their_sound_effect(pack):
+    state = RunState()
+    served = pack.dispatch("maria", "serve_order", {"items": ["cafe_olla"]}, state)
+    assert served.action["sfx"] == "/v1/ambience/cup_on_table"
+    billed = pack.dispatch("maria", "show_bill", {}, state)
+    assert billed.action["sfx"] == "/v1/ambience/receipt"
+
+
+def test_repeat_order_and_unmapped_tools_make_no_sound(pack):
+    """The cup is set down once. A repeat has no action, so it has nothing to carry."""
+    state = RunState()
+    pack.dispatch("maria", "serve_order", {"items": ["concha"]}, state)
+    again = pack.dispatch("maria", "serve_order", {"items": ["concha"]}, state)
+    assert again.action is None
+    gesture = pack.dispatch("luis", "play_gesture", {"gesture": "nod"}, state)
+    assert "sfx" not in gesture.action
+
+
+def test_action_sfx_must_name_a_declared_sound(pack):
+    from orchestrator.scene import ScenarioFile
+    data = pack.scenario.model_dump()
+    data["action_sfx"] = {"serve_order": "foghorn"}
+    with pytest.raises(ValueError, match="unknown ambience id"):
+        ScenarioFile.model_validate(data)
+
+
+def test_ambience_path_only_resolves_declared_ids(pack):
+    assert pack.ambience_path("ocean_loop").name == "ocean_loop.mp3"
+    assert pack.ambience_path("../menu.json") is None
+    assert pack.ambience_path("ocean_loop.mp3") is None
+
 
 def test_every_character_can_slow_down_in_its_own_voice(pack):
     """<despacio> is a multi-voice label; it must exist or the tag is read aloud."""

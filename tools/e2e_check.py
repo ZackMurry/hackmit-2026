@@ -50,6 +50,10 @@ def skip(label: str, why: str) -> None:
     print(f"{SKIP}  {label}\n        {why}")
 
 
+def looks_like_mp3(data: bytes) -> bool:
+    return data[:3] == b"ID3" or (len(data) > 2 and data[0] == 0xFF and data[1] & 0xE0 == 0xE0)
+
+
 def pace(reply: dict) -> float | None:
     """Seconds of reply audio per spoken letter, or None if it cannot be measured.
 
@@ -159,6 +163,22 @@ def main() -> int:
     check(seconds > 0.3, "greeting: Maria says her opening line live when the player walks up",
           f"{seconds:.1f}s, «{hello.get('agent_transcript', '')}», {headers.get('server-timing')}")
 
+    # ---------------------------------------------------------------- soundscape
+    status, raw, _ = request("GET", "/v1/ambience")
+    if status == 404:
+        skip("ambience: endpoints", "/v1/ambience is 404 — the router "
+             "(orchestrator/ambience.py) is not wired into app.py yet")
+    else:
+        sounds = json.loads(raw).get("sounds", []) if status == 200 else []
+        check(len(sounds) == 4 and all(s.get("ready") for s in sounds),
+              "ambience: four sounds listed and generated",
+              ", ".join(f"{s['id']}@{s['volume']}" for s in sounds) or f"HTTP {status}")
+        ocean = next((s for s in sounds if s["id"] == "ocean_loop"), None)
+        status, clip, headers = request("GET", ocean["url"]) if ocean else (0, b"", {})
+        check(status == 200 and looks_like_mp3(clip) and len(clip) > 100_000,
+              "ambience: the ocean loop downloads as MP3",
+              f"HTTP {status}, {len(clip)} bytes, {headers.get('content-type')}")
+
     # ---------------------------------------------------------------- Maria
     # Naming something on the menu is the whole order: she serves on that turn, with
     # no clarifying question and no "¿sí?" in between.
@@ -183,6 +203,8 @@ def main() -> int:
               f"got {served[-1].get('total_mxn')} MXN, expected 80 (50 + 30)")
         check(served[-1].get("total_words_es") == "ochenta",
               "maria: total supplied in Spanish words")
+        check(str(served[-1].get("sfx", "")).startswith("/v1/ambience/"),
+              "maria: serve_order carries its sound effect", f"sfx: {served[-1].get('sfx')!r}")
 
     # Asking her to slow down must never break the turn. Whether the audio really is
     # slower is reported, not asserted: it depends on how much she chooses to repeat.

@@ -1,5 +1,9 @@
 # Scenar.io API
 
+> **New in v1:** streaming replies, session pre-warm, mouth shapes, soundscape, hints, the
+> written report and measured latency. The full contract, with examples and the order to adopt
+> them in, is `docs/v1_modifications.md`. Everything below still works unchanged.
+
 Python 3.11+, managed with [uv](https://docs.astral.sh/uv/). Run from the repository root:
 
 ```sh
@@ -388,10 +392,11 @@ the pack's. State is one small JSON file per run under `runs/transcripts/goals/`
 director sends `reasoning: {effort: none}`, so the model must be one that accepts a
 reasoning parameter (a gpt-5.x model); a gpt-4.x model fails every review silently.
 
-The response also carries what the director noticed but never acts on: `learner_state`
+The response also carries what the director noticed: `learner_state`
 (`fine`, `hesitant`, `stuck`, `distressed`), `mistake_count`, `last_note` and
-`counters`. Useful as a debug overlay. Nothing is delivered to the character and the
-learner is never shown a correction mid-run.
+`counters`. Useful as a debug overlay. `last_note` is also slipped to the character as a
+scene note, at most one per three learner turns; the learner is never shown a
+correction mid-run.
 
 A quote must be a substring of something the learner actually said, checked in code,
 not trusted from the model. `eval/director_cases.jsonl` holds 40 hand-labelled

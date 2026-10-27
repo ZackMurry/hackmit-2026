@@ -375,6 +375,7 @@ def client_with(speech):
 
 def test_stream_endpoint_sends_one_json_event_per_line(tmp_path, monkeypatch):
     monkeypatch.setenv("RUN_DIR", str(tmp_path / "transcripts"))
+    monkeypatch.setenv("RUN_AUDIO_DIR", str(tmp_path / "audio"))
     speech, _ = provider()
     with client_with(speech) as client:
         response = client.post(f"/v1/speech/stream?session_id={uuid4()}&npc_id=maria&run_id=r1"
@@ -390,6 +391,10 @@ def test_stream_endpoint_sends_one_json_event_per_line(tmp_path, monkeypatch):
         # The recogniser's doubts travel with the transcript, never as a verdict.
         recorded = (tmp_path / "transcripts" / "r1.jsonl").read_text().splitlines()
         assert json.loads(recorded[0])["low_confidence_words"] == ["olla"]
+        # The learner's own voice is kept for the end-of-visit pronunciation pass.
+        assert (tmp_path / "audio" / "r1" / "turn_001.wav").is_file()
+        sidecar = json.loads((tmp_path / "audio" / "r1" / "turn_001.json").read_text())
+        assert sidecar["low_confidence_words"] == ["olla"]
         assert client.get("/v1/metrics").json()["characters"]["maria"]["turns"] == 1
 
 

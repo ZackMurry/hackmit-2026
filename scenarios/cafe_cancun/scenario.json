@@ -53,6 +53,22 @@
 
   "soft_timeout": { "timeout_seconds": 2.2, "message": "Mmm, a ver...", "use_llm_generated_message": false },
 
+  "ambience": [
+    { "id": "ocean_loop", "file": "ocean_loop.mp3", "duration_seconds": 30, "loop": true,
+      "prompt": "gentle ocean waves on a sandy beach heard from inside an open-air café, distant, calm, soft, no birds, no music, seamless loop",
+      "prompt_influence": 0.3, "volume": 0.12, "duck_db": -6, "spatial": false },
+    { "id": "cafe_murmur_loop", "file": "cafe_murmur_loop.mp3", "duration_seconds": 30, "loop": true,
+      "prompt": "quiet café interior, soft indistinct murmur of a few people talking far away, occasional ceramic cup and spoon, slow ceiling fan, no music, seamless loop",
+      "prompt_influence": 0.3, "volume": 0.08, "duck_db": -6, "spatial": false },
+    { "id": "cup_on_table", "file": "cup_on_table.mp3", "duration_seconds": 1.5, "loop": false,
+      "prompt": "a ceramic coffee cup and saucer set down gently on a wooden table, close, dry, no voices",
+      "prompt_influence": 0.5, "volume": 0.6, "duck_db": 0, "spatial": true },
+    { "id": "receipt", "file": "receipt.mp3", "duration_seconds": 2, "loop": false,
+      "prompt": "a small thermal receipt printer printing a short receipt and the paper being torn off, close, dry, no voices",
+      "prompt_influence": 0.5, "volume": 0.5, "duck_db": 0, "spatial": true }
+  ],
+  "action_sfx": { "serve_order": "cup_on_table", "show_bill": "receipt" },
+
   "asr_keywords": [
     "café de olla", "horchata", "jamaica", "concha", "chilaquiles",
     "capuchino", "pay de limón", "americano", "deslactosada"
